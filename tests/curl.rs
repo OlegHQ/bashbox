@@ -1,7 +1,7 @@
-use just_bash::commands::curl::{default_status_text, CurlCommand};
-use just_bash::commands::types::{FetchFn, FetchResponse};
-use just_bash::commands::{Command, CommandContext};
-use just_bash::fs::{FileSystem, InMemoryFs};
+use bashbox::commands::curl::{default_status_text, CurlCommand};
+use bashbox::commands::types::{FetchFn, FetchResponse};
+use bashbox::commands::{Command, CommandContext};
+use bashbox::fs::{FileSystem, InMemoryFs};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -1153,7 +1153,7 @@ async fn test_output_to_subdirectory() {
     let fs = Arc::new(InMemoryFs::new());
     fs.mkdir(
         "/subdir",
-        &just_bash::fs::types::MkdirOptions { recursive: false },
+        &bashbox::fs::types::MkdirOptions { recursive: false },
     )
     .await
     .unwrap();

@@ -1,4 +1,4 @@
-name = "just-bash"
+name = "bashbox"
 version = "0.0.1"
 
 [dependencies]

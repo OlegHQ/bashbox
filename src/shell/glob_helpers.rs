@@ -21,7 +21,7 @@ use super::pattern_utils::{
 ///
 /// # Examples
 /// ```
-/// use just_bash::shell::glob_helpers::split_globignore_patterns;
+/// use bashbox::shell::glob_helpers::split_globignore_patterns;
 /// assert_eq!(split_globignore_patterns("*.txt:*.log"), vec!["*.txt", "*.log"]);
 /// ```
 pub fn split_globignore_patterns(globignore: &str) -> Vec<String> {

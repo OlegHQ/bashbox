@@ -1,4 +1,4 @@
-//! just-bash - A simulated bash environment
+//! bashbox - A simulated bash environment
 //!
 //! This library provides a complete parser and interpreter for bash scripts.
 

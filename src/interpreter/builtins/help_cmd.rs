@@ -411,7 +411,7 @@ fn find_matching_builtins(pattern: &str) -> Vec<&'static BuiltinHelp> {
 fn list_all_builtins() -> BuiltinResult {
     let mut lines: Vec<String> = Vec::new();
 
-    lines.push("just-bash shell builtins".to_string());
+    lines.push("bashbox shell builtins".to_string());
     lines.push(
         "These shell commands are defined internally. Type `help' to see this list.".to_string(),
     );
@@ -450,7 +450,7 @@ mod tests {
     fn test_help_no_args() {
         let result = handle_help(&[]);
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("just-bash shell builtins"));
+        assert!(result.stdout.contains("bashbox shell builtins"));
     }
 
     #[test]

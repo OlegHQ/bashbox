@@ -1,4 +1,4 @@
-//! LOC heatmap for just-bash (`src/` + `tests/`).
+//! LOC heatmap for bashbox (`src/` + `tests/`).
 //!
 //! Run from crate root:
 //!   cargo run --bin loc-heatmap
@@ -58,7 +58,7 @@ fn main() -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     writeln!(
         stdout,
-        "just-bash LOC heatmap (cfg(test) mod blocks in src; tests/*.rs counted as all test)"
+        "bashbox LOC heatmap (cfg(test) mod blocks in src; tests/*.rs counted as all test)"
     )?;
     writeln!(stdout, "{}", "=".repeat(72))?;
     writeln!(

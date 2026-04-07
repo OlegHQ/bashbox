@@ -1,4 +1,4 @@
-just-bash LOC heatmap (cfg(test) mod blocks in src; tests/*.rs counted as all test)
+bashbox LOC heatmap (cfg(test) mod blocks in src; tests/*.rs counted as all test)
 ========================================================================
 scope                           total   non-test   test-ish
 ------------------------------------------------------------------------

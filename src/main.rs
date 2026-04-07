@@ -1,9 +1,9 @@
+use bashbox::bash::{Bash, BashOptions};
 use clap::Parser;
-use just_bash::bash::{Bash, BashOptions};
 use std::io::Read;
 
 #[derive(Parser)]
-#[command(name = "just-bash")]
+#[command(name = "bashbox")]
 #[command(about = "A secure bash environment for AI agents")]
 #[command(version)]
 struct Cli {

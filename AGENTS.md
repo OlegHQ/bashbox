@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Guidance for AI coding agents (Cursor, Claude Code, etc.) and humans working on **just-bash**: day-to-day development, architecture, and **incremental refactors** that shrink in-tree code and **use more crates** without dropping behavior the project already supports—**no regressions, no silent behavior changes, no cut features, and no “test bending”** (see **Behavioral contract** below).
+Guidance for AI coding agents (Cursor, Claude Code, etc.) and humans working on **bashbox**: day-to-day development, architecture, and **incremental refactors** that shrink in-tree code and **use more crates** without dropping behavior the project already supports—**no regressions, no silent behavior changes, no cut features, and no “test bending”** (see **Behavioral contract** below).
 
 ## Project overview
 
-just-bash is a sandboxed Bash interpreter written in Rust, aimed at AI agents and automated script execution. It provides a bash frontend (`brush-parser`), interpreter, virtual in-memory filesystem, many Unix-style commands, network controls, and (with the `sandbox` feature) a Vercel-compatible Sandbox API.
+bashbox is a sandboxed Bash interpreter written in Rust, aimed at AI agents and automated script execution. It provides a bash frontend (`brush-parser`), interpreter, virtual in-memory filesystem, many Unix-style commands, network controls, and (with the `sandbox` feature) a Vercel-compatible Sandbox API.
 
 ## Build and development
 
@@ -12,7 +12,7 @@ just-bash is a sandboxed Bash interpreter written in Rust, aimed at AI agents an
 cargo build                    # Debug build
 cargo build --release          # Release build
 cargo test                     # Full test run (675+ unit tests)
-cargo nextest run -p just-bash # Faster test runner for this crate
+cargo nextest run -p bashbox # Faster test runner for this crate
 cargo test <test_name>         # Run a specific test by name
 cargo test -- --nocapture      # Show stdout during tests
 cargo fmt                      # Format
@@ -26,11 +26,11 @@ cargo run --bin loc-heatmap    # LOC heatmap (src/ + tests/) to stdout; redirect
 
 Typical triggers: new or removed **Cargo features** / **bins** / **workspace layout**; renamed or moved **module boundaries** from this document; new **required workflows** (CI, fmt/clippy/test expectations); new **development tools** (scripts, heatmaps, codegen); materially different **command registration** or **public API** surfaces called out here.
 
-If a limitation belongs in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md), update that file too; keep **this** file focused on *how to work on* just-bash.
+If a limitation belongs in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md), update that file too; keep **this** file focused on *how to work on* bashbox.
 
 ## Architecture
 
-The crate exposes a library (`just_bash`) and, with the `cli` feature, the `just-bash` binary.
+The crate exposes a library (`bashbox`) and, with the `cli` feature, the `bashbox` binary.
 
 ### Execution pipeline
 
@@ -40,7 +40,7 @@ Input → parser::parse() (brush-parser) → AST → ExecutionEngine::execute_sc
 
 ### Module map
 
-- **`parser`** (`src/parser.rs`) — Thin wrapper around **`brush-parser`**: tokenization, parsing, and AST types (re-exported from `lib.rs` as `just_bash::ast`, `ParseError`, etc.).
+- **`parser`** (`src/parser.rs`) — Thin wrapper around **`brush-parser`**: tokenization, parsing, and AST types (re-exported from `lib.rs` as `bashbox::ast`, `ParseError`, etc.).
 - **`interpreter/`** — Execution engine (largest area): `execution_engine.rs`, `word_expansion.rs`, `arithmetic.rs`, `pipeline_execution.rs`, `control_flow.rs`, `builtin_dispatch.rs`, `redirections.rs`, plus `expansion/` (parameter, brace, tilde, command substitution, …), `helpers/` (tests, conditions, file tests, …), and `builtins/`.
 - **`commands/`** — External commands implementing the async `Command` trait; register in `commands/mod.rs`. Several delegate to crates (`sed-rs`, `awk-rs`, `jaq-all`, …); `curl/` and shared `jaq_support` follow the adapter pattern.
 - **`fs/`** — Virtual filesystem (`InMemoryFs`, paths, types). No real host FS for normal operation.
@@ -115,7 +115,7 @@ The `loc-heatmap` binary breaks down LOC by area; use it when you need *where* l
 
 ### Tests for delegating commands (`sed`, `awk`, …)
 
-Do **not** mirror the upstream crate’s full language or feature test matrix inside just-bash. Keep tests that prove **this crate’s** wiring: CLI parsing, **`InMemoryFs`** reads (including `-f` script paths), stdin / `-`, error forwarding, and **`#[ignore]`** cases listed in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md). Defer semantics coverage to **sed-rs** / **awk-rs** (or forks), not duplicated hundreds of lines here.
+Do **not** mirror the upstream crate’s full language or feature test matrix inside bashbox. Keep tests that prove **this crate’s** wiring: CLI parsing, **`InMemoryFs`** reads (including `-f` script paths), stdin / `-`, error forwarding, and **`#[ignore]`** cases listed in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md). Defer semantics coverage to **sed-rs** / **awk-rs** (or forks), not duplicated hundreds of lines here.
 
 ## How to refactor incrementally
 
@@ -177,7 +177,7 @@ When you adopt a dependency that cannot meet sandbox or bash semantics, **update
 
 - **Bend tests or drop coverage** to hide regressions (see **Behavioral contract** above). The only acceptable way to “defer” behavior is a **documented** limitation with `#[ignore]` tests that still encode the **target** semantics.
 - Reimplement large subsystems in-tree when a crate plus adapter suffices.
-- Couple **just-bash** to non-generic product code.
+- Couple **bashbox** to non-generic product code.
 
 ---
 

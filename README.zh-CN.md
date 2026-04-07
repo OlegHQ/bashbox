@@ -1,4 +1,4 @@
-# just-bash
+# bashbox
 
 Rust 实现的安全沙箱化 Bash 解释器，专为 AI 代理和自动化脚本执行设计。
 
@@ -6,7 +6,7 @@ Rust 实现的安全沙箱化 Bash 解释器，专为 AI 代理和自动化脚�
 
 ## 概述
 
-just-bash 是一个用 Rust 实现的完整 Bash 解析器、解释器和执行环境。它具备虚拟内存文件系统、70+ Unix 命令实现、网络安全控制以及 Vercel 兼容的 Sandbox API。
+bashbox 是一个用 Rust 实现的完整 Bash 解析器、解释器和执行环境。它具备虚拟内存文件系统、70+ Unix 命令实现、网络安全控制以及 Vercel 兼容的 Sandbox API。
 
 ## 特性
 
@@ -26,13 +26,13 @@ just-bash 是一个用 Rust 实现的完整 Bash 解析器、解释器和执行�
 cargo build --release
 
 # 运行脚本
-./target/release/just-bash -c 'echo "Hello, World!"'
+./target/release/bashbox -c 'echo "Hello, World!"'
 
 # 从文件运行
-./target/release/just-bash script.sh
+./target/release/bashbox script.sh
 
 # JSON 输出模式
-./target/release/just-bash -c 'echo hello' --json
+./target/release/bashbox -c 'echo hello' --json
 ```
 
 ## CLI 选项
@@ -48,7 +48,7 @@ cargo build --release
 ## 作为库使用
 
 ```rust
-use just_bash::bash::{Bash, BashOptions};
+use bashbox::bash::{Bash, BashOptions};
 
 #[tokio::main]
 async fn main() {
@@ -61,7 +61,7 @@ async fn main() {
 ## 使用 Sandbox API
 
 ```rust
-use just_bash::sandbox::{Sandbox, SandboxOptions};
+use bashbox::sandbox::{Sandbox, SandboxOptions};
 
 #[tokio::main]
 async fn main() {

@@ -1,4 +1,4 @@
-# just-bash
+# bashbox
 
 A secure, sandboxed Bash interpreter written in Rust — designed for AI agents and automated script execution.
 
@@ -6,7 +6,7 @@ A secure, sandboxed Bash interpreter written in Rust — designed for AI agents 
 
 ## Overview
 
-just-bash is a complete Bash parser, interpreter, and execution environment implemented in Rust. It features a virtual in-memory filesystem, 70+ Unix command implementations, network security controls, and a Vercel-compatible Sandbox API.
+bashbox is a complete Bash parser, interpreter, and execution environment implemented in Rust. It features a virtual in-memory filesystem, 70+ Unix command implementations, network security controls, and a Vercel-compatible Sandbox API.
 
 ## Features
 
@@ -26,13 +26,13 @@ just-bash is a complete Bash parser, interpreter, and execution environment impl
 cargo build --release
 
 # Run a script
-./target/release/just-bash -c 'echo "Hello, World!"'
+./target/release/bashbox -c 'echo "Hello, World!"'
 
 # Run from file
-./target/release/just-bash script.sh
+./target/release/bashbox script.sh
 
 # JSON output mode
-./target/release/just-bash -c 'echo hello' --json
+./target/release/bashbox -c 'echo hello' --json
 ```
 
 ## CLI Options
@@ -48,7 +48,7 @@ cargo build --release
 ## Usage as Library
 
 ```rust
-use just_bash::bash::{Bash, BashOptions};
+use bashbox::bash::{Bash, BashOptions};
 
 #[tokio::main]
 async fn main() {
@@ -61,7 +61,7 @@ async fn main() {
 ## Usage with Sandbox API
 
 ```rust
-use just_bash::sandbox::{Sandbox, SandboxOptions};
+use bashbox::sandbox::{Sandbox, SandboxOptions};
 
 #[tokio::main]
 async fn main() {

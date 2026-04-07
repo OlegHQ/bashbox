@@ -1,7 +1,7 @@
-# Vendored from https://github.com/arthur-zhang/just-bash @ 2a8f50e763511ae50a746eae4d0ee024f848ecd3
+# Upstream history: https://github.com/arthur-zhang/just-bash @ 2a8f50e763511ae50a746eae4d0ee024f848ecd3
 # Local patches: pathname globs use SyncFsAdapter::glob (not the host FS); ls/cat builtins.
 [package]
-name = "just-bash"
+name = "bashbox"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,11 +11,11 @@ cli = ["dep:clap"]
 sandbox = []
 
 [lib]
-name = "just_bash"
+name = "bashbox"
 path = "src/lib.rs"
 
 [[bin]]
-name = "just-bash"
+name = "bashbox"
 path = "src/main.rs"
 required-features = ["cli"]
 

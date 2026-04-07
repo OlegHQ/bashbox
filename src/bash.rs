@@ -242,7 +242,7 @@ async fn init_filesystem(fs: &dyn FileSystem, use_default_layout: bool) {
         .mkdir("/proc/self/fd", &MkdirOptions { recursive: true })
         .await;
     let _ = fs
-        .write_file("/proc/version", b"Linux version 6.1.0-just-bash\n")
+        .write_file("/proc/version", b"Linux version 6.1.0-bashbox\n")
         .await;
     let _ = fs.write_file("/proc/self/exe", b"/bin/bash").await;
     let _ = fs.write_file("/proc/self/cmdline", b"bash\0").await;
