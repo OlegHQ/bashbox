@@ -11,7 +11,9 @@
 //! - read -u FD - read from file descriptor
 
 use crate::interpreter::builtins::BuiltinResult;
-use crate::interpreter::helpers::{clear_array, get_ifs, split_by_ifs_for_read, strip_trailing_ifs_whitespace};
+use crate::interpreter::helpers::{
+    clear_array, get_ifs, split_by_ifs_for_read, strip_trailing_ifs_whitespace,
+};
 use crate::interpreter::types::InterpreterState;
 
 /// Parse the content of a read-write file descriptor.
@@ -305,15 +307,21 @@ pub fn handle_read(
 
     // Helper closure to consume from the appropriate source.
     // chars_consumed is the number of *characters* consumed, not bytes.
-    let consume_input = |state: &mut InterpreterState, chars_consumed: usize, effective_stdin: &str| {
+    let consume_input = |state: &mut InterpreterState,
+                         chars_consumed: usize,
+                         effective_stdin: &str| {
         // Convert character count to byte offset for string slicing
-        let bytes_consumed = effective_stdin.char_indices()
+        let bytes_consumed = effective_stdin
+            .char_indices()
             .nth(chars_consumed)
             .map(|(idx, _)| idx)
             .unwrap_or(effective_stdin.len());
         if file_descriptor >= 0 {
             if let Some(ref mut fds) = state.file_descriptors {
-                fds.insert(file_descriptor, effective_stdin[bytes_consumed..].to_string());
+                fds.insert(
+                    file_descriptor,
+                    effective_stdin[bytes_consumed..].to_string(),
+                );
             }
         } else if stdin_source_fd >= 0 {
             if let Some(ref mut fds) = state.file_descriptors {
@@ -321,7 +329,10 @@ pub fn handle_read(
                     if fd_content.starts_with("__rw__:") {
                         if let Some((path, position, content)) = parse_rw_fd_content(&fd_content) {
                             let new_position = position + bytes_consumed;
-                            fds.insert(stdin_source_fd, encode_rw_fd_content(&path, new_position, &content));
+                            fds.insert(
+                                stdin_source_fd,
+                                encode_rw_fd_content(&path, new_position, &content),
+                            );
                         }
                     }
                 }
@@ -490,7 +501,9 @@ pub fn handle_read(
 
     // If no variable names given (only REPLY), store whole line without IFS splitting
     if var_names.len() == 1 && var_names[0] == "REPLY" {
-        state.env.insert("REPLY".to_string(), process_backslash_escapes(&line));
+        state
+            .env
+            .insert("REPLY".to_string(), process_backslash_escapes(&line));
         return BuiltinResult {
             stdout: String::new(),
             stderr: String::new(),
@@ -525,7 +538,9 @@ pub fn handle_read(
         if j < var_names.len() - 1 {
             // Assign single word, processing backslash escapes
             let word = split_result.words.get(j).map(|s| s.as_str()).unwrap_or("");
-            state.env.insert(name.clone(), process_backslash_escapes(word));
+            state
+                .env
+                .insert(name.clone(), process_backslash_escapes(word));
         } else {
             // Last variable gets all remaining content from original line
             if j < split_result.word_starts.len() {
@@ -604,7 +619,12 @@ mod tests {
     #[test]
     fn test_read_nchars() {
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-n".to_string(), "5".to_string()], "hello world\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-n".to_string(), "5".to_string()],
+            "hello world\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"hello".to_string()));
     }
@@ -612,7 +632,12 @@ mod tests {
     #[test]
     fn test_read_nchars_exact() {
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-N".to_string(), "5".to_string()], "hello world\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-N".to_string(), "5".to_string()],
+            "hello world\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"hello".to_string()));
     }
@@ -620,7 +645,12 @@ mod tests {
     #[test]
     fn test_read_custom_delimiter() {
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-d".to_string(), ":".to_string()], "hello:world", -1);
+        let result = handle_read(
+            &mut state,
+            &["-d".to_string(), ":".to_string()],
+            "hello:world",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"hello".to_string()));
     }
@@ -628,7 +658,12 @@ mod tests {
     #[test]
     fn test_read_array() {
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-a".to_string(), "arr".to_string()], "one two three\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-a".to_string(), "arr".to_string()],
+            "one two three\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("arr_0"), Some(&"one".to_string()));
         assert_eq!(state.env.get("arr_1"), Some(&"two".to_string()));
@@ -638,7 +673,12 @@ mod tests {
     #[test]
     fn test_read_timeout_zero() {
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-t".to_string(), "0".to_string()], "hello\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-t".to_string(), "0".to_string()],
+            "hello\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"".to_string()));
     }
@@ -648,7 +688,12 @@ mod tests {
         // Test that -N counts characters, not bytes
         let mut state = make_state();
         // "你好世界" is 4 characters but 12 bytes in UTF-8
-        let result = handle_read(&mut state, &["-N".to_string(), "2".to_string()], "你好世界\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-N".to_string(), "2".to_string()],
+            "你好世界\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"你好".to_string()));
     }
@@ -657,7 +702,12 @@ mod tests {
     fn test_read_nchars_multibyte() {
         // Test that -n counts characters, not bytes
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-n".to_string(), "3".to_string()], "café\n", -1);
+        let result = handle_read(
+            &mut state,
+            &["-n".to_string(), "3".to_string()],
+            "café\n",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"caf".to_string()));
     }
@@ -666,7 +716,12 @@ mod tests {
     fn test_read_multibyte_delimiter() {
         // Test delimiter comparison works correctly
         let mut state = make_state();
-        let result = handle_read(&mut state, &["-d".to_string(), ":".to_string()], "héllo:world", -1);
+        let result = handle_read(
+            &mut state,
+            &["-d".to_string(), ":".to_string()],
+            "héllo:world",
+            -1,
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("REPLY"), Some(&"héllo".to_string()));
     }

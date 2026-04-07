@@ -1,21 +1,43 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct HelpCommand;
 
 const CATEGORIES: &[(&str, &[&str])] = &[
-    ("File operations", &["ls", "cat", "head", "tail", "wc", "touch", "mkdir", "rm", "cp", "mv", "ln", "chmod", "stat", "readlink"]),
-    ("Text processing", &["grep", "sed", "awk", "sort", "uniq", "cut", "tr", "tee", "diff"]),
+    (
+        "File operations",
+        &[
+            "ls", "cat", "head", "tail", "wc", "touch", "mkdir", "rm", "cp", "mv", "ln", "chmod",
+            "stat", "readlink",
+        ],
+    ),
+    (
+        "Text processing",
+        &[
+            "grep", "sed", "awk", "sort", "uniq", "cut", "tr", "tee", "diff",
+        ],
+    ),
     ("Search", &["find"]),
-    ("Navigation & paths", &["pwd", "basename", "dirname", "tree", "du"]),
-    ("Environment & shell", &["echo", "printf", "env", "printenv", "export", "alias", "unalias", "history", "clear", "true", "false", "bash", "sh"]),
+    (
+        "Navigation & paths",
+        &["pwd", "basename", "dirname", "tree", "du"],
+    ),
+    (
+        "Environment & shell",
+        &[
+            "echo", "printf", "env", "printenv", "export", "alias", "unalias", "history", "clear",
+            "true", "false", "bash", "sh",
+        ],
+    ),
     ("Data processing", &["xargs", "jq", "base64", "date"]),
     ("Network", &["curl"]),
 ];
 
 #[async_trait]
 impl Command for HelpCommand {
-    fn name(&self) -> &'static str { "help" }
+    fn name(&self) -> &'static str {
+        "help"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         if ctx.args.iter().any(|a| a == "--help" || a == "-h") {
@@ -33,7 +55,8 @@ impl Command for HelpCommand {
                     ctx.cwd.clone(),
                     ctx.env.clone(),
                     ctx.fs.clone(),
-                ).await;
+                )
+                .await;
             }
         }
 
@@ -53,9 +76,9 @@ impl Command for HelpCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -69,7 +92,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = HelpCommand.execute(ctx).await;
@@ -77,7 +100,7 @@ mod tests {
         assert!(result.stdout.contains("Usage"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_list_commands() {
         let ctx = create_ctx(vec![]);
         let result = HelpCommand.execute(ctx).await;
@@ -88,7 +111,7 @@ mod tests {
         assert!(result.stdout.contains("grep"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_categories() {
         let ctx = create_ctx(vec![]);
         let result = HelpCommand.execute(ctx).await;

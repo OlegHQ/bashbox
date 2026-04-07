@@ -11,9 +11,9 @@
 //!   complete -D ...                 - Set default completion (for commands with no specific spec)
 //!   complete -o opt cmd             - Set completion options (nospace, filenames, default, etc.)
 
-use std::collections::HashMap;
-use crate::interpreter::types::{CompletionSpec, InterpreterState};
 use super::break_cmd::BuiltinResult;
+use crate::interpreter::types::{CompletionSpec, InterpreterState};
+use std::collections::HashMap;
 
 /// Valid completion options for -o flag
 const VALID_OPTIONS: &[&str] = &[
@@ -77,7 +77,10 @@ pub fn handle_complete(state: &mut InterpreterState, args: &[String]) -> Builtin
             }
             let opt = &args[i];
             if !VALID_OPTIONS.contains(&opt.as_str()) {
-                return BuiltinResult::failure(&format!("complete: {}: invalid option name\n", opt), 2);
+                return BuiltinResult::failure(
+                    &format!("complete: {}: invalid option name\n", opt),
+                    2,
+                );
             }
             options.push(opt.clone());
         } else if arg == "-A" {
@@ -98,7 +101,10 @@ pub fn handle_complete(state: &mut InterpreterState, args: &[String]) -> Builtin
             // Skip these options (not fully implemented)
             i += 1;
             if i >= args.len() {
-                return BuiltinResult::failure(&format!("complete: {}: option requires an argument\n", arg), 2);
+                return BuiltinResult::failure(
+                    &format!("complete: {}: option requires an argument\n", arg),
+                    2,
+                );
             }
         } else if arg == "--" {
             // End of options
@@ -162,8 +168,16 @@ pub fn handle_complete(state: &mut InterpreterState, args: &[String]) -> Builtin
             wordlist,
             function: func_name,
             command: command_str,
-            options: if options.is_empty() { None } else { Some(options) },
-            actions: if actions.is_empty() { None } else { Some(actions) },
+            options: if options.is_empty() {
+                None
+            } else {
+                Some(options)
+            },
+            actions: if actions.is_empty() {
+                None
+            } else {
+                Some(actions)
+            },
             is_default: Some(true),
         };
         specs.insert("__default__".to_string(), spec);
@@ -175,8 +189,16 @@ pub fn handle_complete(state: &mut InterpreterState, args: &[String]) -> Builtin
             wordlist: wordlist.clone(),
             function: func_name.clone(),
             command: command_str.clone(),
-            options: if options.is_empty() { None } else { Some(options.clone()) },
-            actions: if actions.is_empty() { None } else { Some(actions.clone()) },
+            options: if options.is_empty() {
+                None
+            } else {
+                Some(options.clone())
+            },
+            actions: if actions.is_empty() {
+                None
+            } else {
+                Some(actions.clone())
+            },
             is_default: None,
         };
         specs.insert(cmd.clone(), spec);
@@ -297,11 +319,14 @@ mod tests {
     #[test]
     fn test_complete_set_wordlist() {
         let mut state = InterpreterState::default();
-        let result = handle_complete(&mut state, &[
-            "-W".to_string(),
-            "foo bar baz".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_complete(
+            &mut state,
+            &[
+                "-W".to_string(),
+                "foo bar baz".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();
@@ -312,11 +337,14 @@ mod tests {
     #[test]
     fn test_complete_set_function() {
         let mut state = InterpreterState::default();
-        let result = handle_complete(&mut state, &[
-            "-F".to_string(),
-            "_my_completion".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_complete(
+            &mut state,
+            &[
+                "-F".to_string(),
+                "_my_completion".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();
@@ -328,10 +356,11 @@ mod tests {
     fn test_complete_remove() {
         let mut state = InterpreterState::default();
         state.completion_specs = Some(HashMap::new());
-        state.completion_specs.as_mut().unwrap().insert(
-            "mycommand".to_string(),
-            CompletionSpec::default(),
-        );
+        state
+            .completion_specs
+            .as_mut()
+            .unwrap()
+            .insert("mycommand".to_string(), CompletionSpec::default());
 
         let result = handle_complete(&mut state, &["-r".to_string(), "mycommand".to_string()]);
         assert_eq!(result.exit_code, 0);
@@ -341,11 +370,14 @@ mod tests {
     #[test]
     fn test_complete_invalid_option() {
         let mut state = InterpreterState::default();
-        let result = handle_complete(&mut state, &[
-            "-o".to_string(),
-            "invalid".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_complete(
+            &mut state,
+            &[
+                "-o".to_string(),
+                "invalid".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("invalid option name"));
     }
@@ -353,11 +385,14 @@ mod tests {
     #[test]
     fn test_complete_default() {
         let mut state = InterpreterState::default();
-        let result = handle_complete(&mut state, &[
-            "-D".to_string(),
-            "-W".to_string(),
-            "default words".to_string(),
-        ]);
+        let result = handle_complete(
+            &mut state,
+            &[
+                "-D".to_string(),
+                "-W".to_string(),
+                "default words".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();

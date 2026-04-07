@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 const ALIAS_PREFIX: &str = "BASH_ALIAS_";
 
@@ -7,12 +8,15 @@ pub struct AliasCommand;
 
 #[async_trait]
 impl Command for AliasCommand {
-    fn name(&self) -> &'static str { "alias" }
+    fn name(&self) -> &'static str {
+        "alias"
+    }
 
     async fn execute(&self, mut ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
-                "alias - define or display aliases\n\nUsage: alias [name[=value] ...]\n".to_string()
+                "alias - define or display aliases\n\nUsage: alias [name[=value] ...]\n"
+                    .to_string(),
             );
         }
 
@@ -63,9 +67,9 @@ impl Command for AliasCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -91,7 +95,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_help() {
         let cmd = AliasCommand;
         let result = cmd.execute(create_ctx(vec!["--help"])).await;
@@ -99,7 +103,7 @@ mod tests {
         assert!(result.stdout.contains("alias"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_list_empty() {
         let cmd = AliasCommand;
         let result = cmd.execute(create_ctx(vec![])).await;
@@ -107,7 +111,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_list_with_aliases() {
         let cmd = AliasCommand;
         let mut env = HashMap::new();
@@ -117,14 +121,14 @@ mod tests {
         assert!(result.stdout.contains("alias ll='ls -la'"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_set() {
         let cmd = AliasCommand;
         let result = cmd.execute(create_ctx(vec!["ll=ls -la"])).await;
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_get_existing() {
         let cmd = AliasCommand;
         let mut env = HashMap::new();
@@ -134,7 +138,7 @@ mod tests {
         assert!(result.stdout.contains("alias ll='ls -la'"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_alias_get_not_found() {
         let cmd = AliasCommand;
         let result = cmd.execute(create_ctx(vec!["nonexistent"])).await;

@@ -1,8 +1,9 @@
 //! return - Return from a function with an exit code
 
-use crate::interpreter::errors::{ReturnError, InterpreterError};
-use crate::interpreter::types::InterpreterState;
 use super::break_cmd::BuiltinResult;
+use crate::interpreter::errors::{InterpreterError, ReturnError};
+use crate::interpreter::helpers::builtin_args::{parse_numeric_arg, wrap_exit_code};
+use crate::interpreter::types::InterpreterState;
 
 /// Handle the return builtin command.
 ///
@@ -12,7 +13,10 @@ use super::break_cmd::BuiltinResult;
 ///
 /// # Returns
 /// Ok(BuiltinResult) for error cases, Err(InterpreterError) for control flow
-pub fn handle_return(state: &InterpreterState, args: &[String]) -> Result<BuiltinResult, InterpreterError> {
+pub fn handle_return(
+    state: &InterpreterState,
+    args: &[String],
+) -> Result<BuiltinResult, InterpreterError> {
     // Check if we're in a function or sourced script
     if state.call_depth == 0 && state.source_depth == 0 {
         return Ok(BuiltinResult::failure(
@@ -21,29 +25,11 @@ pub fn handle_return(state: &InterpreterState, args: &[String]) -> Result<Builti
         ));
     }
 
-    let mut exit_code = state.last_exit_code;
-    if !args.is_empty() {
-        let arg = &args[0];
-        // Empty string or non-numeric is an error
-        if arg.is_empty() || !arg.chars().all(|c| c.is_ascii_digit() || c == '-') {
-            return Ok(BuiltinResult::failure(
-                &format!("bash: return: {}: numeric argument required\n", arg),
-                2,
-            ));
-        }
-        match arg.parse::<i32>() {
-            Ok(n) => {
-                // Bash uses modulo 256 for exit codes
-                exit_code = ((n % 256) + 256) % 256;
-            }
-            Err(_) => {
-                return Ok(BuiltinResult::failure(
-                    &format!("bash: return: {}: numeric argument required\n", arg),
-                    2,
-                ));
-            }
-        }
-    }
+    let exit_code = match parse_numeric_arg("return", args) {
+        Ok(None) => state.last_exit_code,
+        Ok(Some(n)) => wrap_exit_code(n),
+        Err(msg) => return Ok(BuiltinResult::failure(&msg, 2)),
+    };
 
     Err(ReturnError::new(exit_code, String::new(), String::new()).into())
 }

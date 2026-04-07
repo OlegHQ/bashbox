@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct CommCommand;
 
@@ -31,14 +33,25 @@ impl Command for CommCommand {
                 "-1" => suppress1 = true,
                 "-2" => suppress2 = true,
                 "-3" => suppress3 = true,
-                "-12" | "-21" => { suppress1 = true; suppress2 = true; }
-                "-13" | "-31" => { suppress1 = true; suppress3 = true; }
-                "-23" | "-32" => { suppress2 = true; suppress3 = true; }
+                "-12" | "-21" => {
+                    suppress1 = true;
+                    suppress2 = true;
+                }
+                "-13" | "-31" => {
+                    suppress1 = true;
+                    suppress3 = true;
+                }
+                "-23" | "-32" => {
+                    suppress2 = true;
+                    suppress3 = true;
+                }
                 "-123" | "-132" | "-213" | "-231" | "-312" | "-321" => {
-                    suppress1 = true; suppress2 = true; suppress3 = true;
+                    suppress1 = true;
+                    suppress2 = true;
+                    suppress3 = true;
                 }
                 s if s.starts_with('-') && s != "-" => {
-                    return CommandResult::error(format!("comm: invalid option -- '{}'\n", &s[1..]));
+                    return CommandResult::error(invalid_option("comm", &s[1..]));
                 }
                 _ => files.push(arg.clone()),
             }
@@ -46,7 +59,7 @@ impl Command for CommCommand {
 
         if files.len() != 2 {
             return CommandResult::error(
-                "comm: missing operand\nTry 'comm --help' for more information.\n".to_string()
+                "comm: missing operand\nTry 'comm --help' for more information.\n".to_string(),
             );
         }
 
@@ -57,7 +70,7 @@ impl Command for CommCommand {
             match ctx.fs.read_file(&path).await {
                 Ok(c) => c,
                 Err(_) => {
-                    return CommandResult::error(format!("comm: {}: No such file or directory\n", files[0]));
+                    return CommandResult::error(no_such_file("comm", &files[0]));
                 }
             }
         };
@@ -69,7 +82,7 @@ impl Command for CommCommand {
             match ctx.fs.read_file(&path).await {
                 Ok(c) => c,
                 Err(_) => {
-                    return CommandResult::error(format!("comm: {}: No such file or directory\n", files[1]));
+                    return CommandResult::error(no_such_file("comm", &files[1]));
                 }
             }
         };
@@ -77,11 +90,19 @@ impl Command for CommCommand {
         let mut lines1: Vec<&str> = content1.split('\n').collect();
         let mut lines2: Vec<&str> = content2.split('\n').collect();
 
-        if !lines1.is_empty() && lines1.last() == Some(&"") { lines1.pop(); }
-        if !lines2.is_empty() && lines2.last() == Some(&"") { lines2.pop(); }
+        if !lines1.is_empty() && lines1.last() == Some(&"") {
+            lines1.pop();
+        }
+        if !lines2.is_empty() && lines2.last() == Some(&"") {
+            lines2.pop();
+        }
 
         let col2_prefix = if suppress1 { "" } else { "\t" };
-        let col3_prefix = format!("{}{}", if suppress1 { "" } else { "\t" }, if suppress2 { "" } else { "\t" });
+        let col3_prefix = format!(
+            "{}{}",
+            if suppress1 { "" } else { "\t" },
+            if suppress2 { "" } else { "\t" }
+        );
 
         let mut output = String::new();
         let mut i = 0;
@@ -124,9 +145,9 @@ impl Command for CommCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::{InMemoryFs, FileSystem};
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -140,7 +161,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = CommCommand.execute(ctx).await;
@@ -148,14 +169,14 @@ mod tests {
         assert!(result.stdout.contains("-1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_missing_operand() {
         let ctx = create_ctx(vec![]);
         let result = CommCommand.execute(ctx).await;
         assert!(result.stderr.contains("missing operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_compare_files() {
         let mut ctx = create_ctx(vec!["/a.txt", "/b.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -167,7 +188,7 @@ mod tests {
         assert!(result.stdout.contains("d"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_suppress_col1() {
         let mut ctx = create_ctx(vec!["-1", "/a.txt", "/b.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -178,7 +199,7 @@ mod tests {
         assert!(!result.stdout.starts_with("a"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_file_not_found() {
         let ctx = create_ctx(vec!["/nonexistent", "/b.txt"]);
         let result = CommCommand.execute(ctx).await;

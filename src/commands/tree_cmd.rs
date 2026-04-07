@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::vfs_walk::{child_path, read_dir_sorted};
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct TreeCommand;
 
@@ -47,9 +48,18 @@ impl Command for TreeCommand {
             let arg = &ctx.args[i];
             match arg.as_str() {
                 "--help" => return CommandResult::success(format!("{}\n", HELP)),
-                "-a" => { options.show_hidden = true; i += 1; }
-                "-d" => { options.directories_only = true; i += 1; }
-                "-f" => { options.full_path = true; i += 1; }
+                "-a" => {
+                    options.show_hidden = true;
+                    i += 1;
+                }
+                "-d" => {
+                    options.directories_only = true;
+                    i += 1;
+                }
+                "-f" => {
+                    options.full_path = true;
+                    i += 1;
+                }
                 "-L" => {
                     i += 1;
                     if i < ctx.args.len() {
@@ -139,7 +149,7 @@ async fn build_tree(
         }
     }
 
-    let entries = match ctx.fs.readdir(&full_path).await {
+    let entries = match read_dir_sorted(ctx.fs.as_ref(), &full_path).await {
         Ok(e) => e,
         Err(_) => return result,
     };
@@ -148,16 +158,11 @@ async fn build_tree(
         .into_iter()
         .filter(|e| options.show_hidden || !e.starts_with('.'))
         .collect();
-    filtered.sort();
 
     if options.directories_only {
         let mut dirs_only = Vec::new();
         for entry in &filtered {
-            let entry_path = if full_path == "/" {
-                format!("/{}", entry)
-            } else {
-                format!("{}/{}", full_path, entry)
-            };
+            let entry_path = child_path(&full_path, entry);
             if let Ok(s) = ctx.fs.stat(&entry_path).await {
                 if s.is_directory {
                     dirs_only.push(entry.clone());
@@ -168,11 +173,7 @@ async fn build_tree(
     }
 
     for (idx, entry) in filtered.iter().enumerate() {
-        let entry_path = if full_path == "/" {
-            format!("/{}", entry)
-        } else {
-            format!("{}/{}", full_path, entry)
-        };
+        let entry_path = child_path(&full_path, entry);
         let is_last = idx == filtered.len() - 1;
         let connector = if is_last { "`-- " } else { "|-- " };
         let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "|   " });
@@ -182,21 +183,30 @@ async fn build_tree(
             Err(_) => continue,
         };
 
-        let display_name = if options.full_path { &entry_path } else { entry };
+        let display_name = if options.full_path {
+            &entry_path
+        } else {
+            entry
+        };
 
         if stat.is_directory {
             result.dir_count += 1;
-            result.output.push_str(&format!("{}{}{}\n", prefix, connector, display_name));
+            result
+                .output
+                .push_str(&format!("{}{}{}\n", prefix, connector, display_name));
 
             if options.max_depth.is_none() || depth + 1 < options.max_depth.unwrap() {
-                let sub = build_tree_recursive(ctx, &entry_path, options, &child_prefix, depth + 1).await;
+                let sub =
+                    build_tree_recursive(ctx, &entry_path, options, &child_prefix, depth + 1).await;
                 result.output.push_str(&sub.output);
                 result.dir_count += sub.dir_count;
                 result.file_count += sub.file_count;
             }
         } else {
             result.file_count += 1;
-            result.output.push_str(&format!("{}{}{}\n", prefix, connector, display_name));
+            result
+                .output
+                .push_str(&format!("{}{}{}\n", prefix, connector, display_name));
         }
     }
 
@@ -222,7 +232,7 @@ async fn build_tree_recursive(
         }
     }
 
-    let entries = match ctx.fs.readdir(path).await {
+    let entries = match read_dir_sorted(ctx.fs.as_ref(), path).await {
         Ok(e) => e,
         Err(_) => return result,
     };
@@ -231,16 +241,11 @@ async fn build_tree_recursive(
         .into_iter()
         .filter(|e| options.show_hidden || !e.starts_with('.'))
         .collect();
-    filtered.sort();
 
     if options.directories_only {
         let mut dirs_only = Vec::new();
         for entry in &filtered {
-            let entry_path = if path == "/" {
-                format!("/{}", entry)
-            } else {
-                format!("{}/{}", path, entry)
-            };
+            let entry_path = child_path(path, entry);
             if let Ok(s) = ctx.fs.stat(&entry_path).await {
                 if s.is_directory {
                     dirs_only.push(entry.clone());
@@ -251,11 +256,7 @@ async fn build_tree_recursive(
     }
 
     for (idx, entry) in filtered.iter().enumerate() {
-        let entry_path = if path == "/" {
-            format!("/{}", entry)
-        } else {
-            format!("{}/{}", path, entry)
-        };
+        let entry_path = child_path(path, entry);
         let is_last = idx == filtered.len() - 1;
         let connector = if is_last { "`-- " } else { "|-- " };
         let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "|   " });
@@ -265,19 +266,34 @@ async fn build_tree_recursive(
             Err(_) => continue,
         };
 
-        let display_name = if options.full_path { &entry_path } else { entry };
+        let display_name = if options.full_path {
+            &entry_path
+        } else {
+            entry
+        };
 
         if stat.is_directory {
             result.dir_count += 1;
-            result.output.push_str(&format!("{}{}{}\n", prefix, connector, display_name));
+            result
+                .output
+                .push_str(&format!("{}{}{}\n", prefix, connector, display_name));
 
-            let sub = Box::pin(build_tree_recursive(ctx, &entry_path, options, &child_prefix, depth + 1)).await;
+            let sub = Box::pin(build_tree_recursive(
+                ctx,
+                &entry_path,
+                options,
+                &child_prefix,
+                depth + 1,
+            ))
+            .await;
             result.output.push_str(&sub.output);
             result.dir_count += sub.dir_count;
             result.file_count += sub.file_count;
         } else {
             result.file_count += 1;
-            result.output.push_str(&format!("{}{}{}\n", prefix, connector, display_name));
+            result
+                .output
+                .push_str(&format!("{}{}{}\n", prefix, connector, display_name));
         }
     }
 
@@ -287,9 +303,9 @@ async fn build_tree_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::{InMemoryFs, FileSystem};
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -303,7 +319,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = TreeCommand.execute(ctx).await;
@@ -311,7 +327,7 @@ mod tests {
         assert!(result.stdout.contains("-a"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_dir() {
         let mut ctx = create_ctx(vec!["/"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -321,7 +337,7 @@ mod tests {
         assert!(result.stdout.contains("director"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_with_files() {
         let mut ctx = create_ctx(vec!["/"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -331,7 +347,7 @@ mod tests {
         assert!(result.stdout.contains("test.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_directories_only() {
         let mut ctx = create_ctx(vec!["-d", "/"]);
         let fs = Arc::new(InMemoryFs::new());

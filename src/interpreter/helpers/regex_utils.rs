@@ -36,13 +36,7 @@ mod tests {
 
     #[test]
     fn test_escape_regex_complex() {
-        assert_eq!(
-            escape_regex("file.*.txt"),
-            "file\\.\\*\\.txt"
-        );
-        assert_eq!(
-            escape_regex("^start.*end$"),
-            "\\^start\\.\\*end\\$"
-        );
+        assert_eq!(escape_regex("file.*.txt"), "file\\.\\*\\.txt");
+        assert_eq!(escape_regex("^start.*end$"), "\\^start\\.\\*end\\$");
     }
 }

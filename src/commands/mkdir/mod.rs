@@ -1,7 +1,8 @@
 // src/commands/mkdir/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::MkdirOptions;
+use async_trait::async_trait;
 
 pub struct MkdirCommand;
 
@@ -12,14 +13,15 @@ impl Command for MkdirCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: mkdir [OPTION]... DIRECTORY...\n\n\
                  Create the DIRECTORY(ies), if they do not already exist.\n\n\
                  Options:\n\
                    -p, --parents    no error if existing, make parent directories as needed\n\
                    -v, --verbose    print a message for each created directory\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -67,7 +69,10 @@ impl Command for MkdirCommand {
                             dir
                         ));
                     } else {
-                        stderr.push_str(&format!("mkdir: cannot create directory '{}': {}\n", dir, msg));
+                        stderr.push_str(&format!(
+                            "mkdir: cannot create directory '{}': {}\n",
+                            dir, msg
+                        ));
                     }
                     exit_code = 1;
                 }
@@ -81,23 +86,9 @@ impl Command for MkdirCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_simple() {
         let ctx = make_ctx(vec!["/newdir"]);
         let cmd = MkdirCommand;
@@ -105,7 +96,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_recursive() {
         let ctx = make_ctx(vec!["-p", "/a/b/c"]);
         let cmd = MkdirCommand;
@@ -113,7 +104,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_verbose() {
         let ctx = make_ctx(vec!["-v", "/newdir"]);
         let cmd = MkdirCommand;
@@ -122,7 +113,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_missing_operand() {
         let ctx = make_ctx(vec![]);
         let cmd = MkdirCommand;
@@ -131,7 +122,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_no_parent() {
         let ctx = make_ctx(vec!["/nonexistent/dir"]);
         let cmd = MkdirCommand;

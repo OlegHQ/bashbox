@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct TimeoutCommand;
 
@@ -18,8 +18,9 @@ Options:
   --help             display this help and exit";
 
 fn is_valid_duration(arg: &str) -> bool {
-    let s = if arg.ends_with('s') || arg.ends_with('m') || arg.ends_with('h') || arg.ends_with('d') {
-        &arg[..arg.len()-1]
+    let s = if arg.ends_with('s') || arg.ends_with('m') || arg.ends_with('h') || arg.ends_with('d')
+    {
+        &arg[..arg.len() - 1]
     } else {
         arg
     };
@@ -103,7 +104,8 @@ impl Command for TimeoutCommand {
             }
         };
 
-        let command_str = command_args.iter()
+        let command_str = command_args
+            .iter()
             .map(|arg| {
                 if arg.contains(' ') || arg.contains('\t') {
                     format!("'{}'", arg.replace('\'', "'\\''"))
@@ -129,9 +131,9 @@ impl Command for TimeoutCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -145,7 +147,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = TimeoutCommand.execute(ctx).await;
@@ -153,21 +155,21 @@ mod tests {
         assert!(result.stdout.contains("DURATION"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_missing_operand() {
         let ctx = create_ctx(vec![]);
         let result = TimeoutCommand.execute(ctx).await;
         assert!(result.stderr.contains("missing operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_invalid_duration() {
         let ctx = create_ctx(vec!["abc", "echo", "hello"]);
         let result = TimeoutCommand.execute(ctx).await;
         assert!(result.stderr.contains("invalid time interval"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_no_exec_fn() {
         let ctx = create_ctx(vec!["5", "echo", "hello"]);
         let result = TimeoutCommand.execute(ctx).await;

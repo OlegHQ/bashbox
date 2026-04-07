@@ -3,8 +3,21 @@
 //! These helpers reduce verbosity and improve readability when
 //! constructing ExecResult objects throughout the interpreter.
 
-use crate::interpreter::types::ExecResult;
+use crate::interpreter::builtins::BuiltinResult;
 use crate::interpreter::errors::{ExecutionLimitError, LimitType};
+use crate::interpreter::types::ExecResult;
+
+/// Convert a builtin result to an execution result.
+#[must_use]
+pub fn from_builtin(b: BuiltinResult) -> ExecResult {
+    ExecResult::new(b.stdout, b.stderr, b.exit_code)
+}
+
+/// Tuple form used by some builtins (`hash`, `let`, `compgen`, `dirs`, …).
+#[must_use]
+pub fn from_tuple((stdout, stderr, code): (String, String, i32)) -> ExecResult {
+    ExecResult::new(stdout, stderr, code)
+}
 
 /// A successful result with no output.
 /// Use this for commands that succeed silently.
@@ -51,12 +64,10 @@ pub fn throw_execution_limit(
     stdout: impl Into<String>,
     stderr: impl Into<String>,
 ) -> ! {
-    panic!("{}", ExecutionLimitError::new(
-        message.into(),
-        limit_type,
-        stdout.into(),
-        stderr.into(),
-    ))
+    panic!(
+        "{}",
+        ExecutionLimitError::new(message.into(), limit_type, stdout.into(), stderr.into(),)
+    )
 }
 
 #[cfg(test)]

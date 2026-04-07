@@ -17,11 +17,9 @@
 //! - Built-in commands (builtins/)
 //! - Redirections (redirections.rs)
 
+use crate::interpreter::types::{ExecResult, ExecutionLimits, InterpreterState, ShoptOptions};
+use brush_parser::ast as bast;
 use std::collections::HashMap;
-use crate::ast::types::{
-    CommandNode, PipelineNode, ScriptNode, SimpleCommandNode, StatementNode,
-};
-use crate::interpreter::types::{ExecResult, ExecutionLimits, InterpreterState};
 
 /// Options for creating an interpreter instance.
 #[derive(Debug, Clone)]
@@ -70,8 +68,15 @@ pub trait FileSystem: Send + Sync {
     /// List directory contents.
     fn read_dir(&self, path: &str) -> Result<Vec<String>, std::io::Error>;
 
-    /// Expand glob patterns.
-    fn glob(&self, pattern: &str, cwd: &str) -> Result<Vec<String>, std::io::Error>;
+    /// Expand glob patterns against the virtual filesystem using the same engine as
+    /// pathname expansion in external contexts (`GlobExpander`).
+    fn glob(
+        &self,
+        pattern: &str,
+        cwd: &str,
+        env: &HashMap<String, String>,
+        shopt: &ShoptOptions,
+    ) -> Result<Vec<String>, std::io::Error>;
 }
 
 /// File metadata.
@@ -107,13 +112,16 @@ pub trait CommandExecutor: Send + Sync {
 ///
 /// Used for eval, source, and other commands that need to
 /// execute parsed scripts.
-pub type ExecuteScriptFn = Box<dyn Fn(&ScriptNode, &mut InterpreterState) -> ExecResult + Send + Sync>;
+pub type ExecuteScriptFn =
+    Box<dyn Fn(&bast::Program, &mut InterpreterState) -> ExecResult + Send + Sync>;
 
 /// Statement execution callback type.
-pub type ExecuteStatementFn = Box<dyn Fn(&StatementNode, &mut InterpreterState, &str) -> ExecResult + Send + Sync>;
+pub type ExecuteStatementFn =
+    Box<dyn Fn(&bast::CompoundListItem, &mut InterpreterState, &str) -> ExecResult + Send + Sync>;
 
 /// Command execution callback type.
-pub type ExecuteCommandFn = Box<dyn Fn(&CommandNode, &mut InterpreterState, &str) -> ExecResult + Send + Sync>;
+pub type ExecuteCommandFn =
+    Box<dyn Fn(&bast::Command, &mut InterpreterState, &str) -> ExecResult + Send + Sync>;
 
 /// Interpreter context passed to execution functions.
 ///
@@ -218,7 +226,10 @@ pub fn update_exit_code(state: &mut InterpreterState, exit_code: i32) {
 /// Increment command count and check execution limits.
 ///
 /// Returns an error message if the limit is exceeded.
-pub fn check_command_limit(state: &mut InterpreterState, limits: &ExecutionLimits) -> Option<String> {
+pub fn check_command_limit(
+    state: &mut InterpreterState,
+    limits: &ExecutionLimits,
+) -> Option<String> {
     state.command_count += 1;
     if state.command_count > limits.max_command_count {
         Some(format!(

@@ -1,4 +1,6 @@
 // src/commands/utils/head_tail.rs
+use crate::commands::arg_helpers::invalid_option;
+use crate::commands::errors::no_such_file;
 use crate::commands::{CommandContext, CommandResult};
 
 #[derive(Debug, Clone)]
@@ -64,16 +66,21 @@ pub fn parse_head_tail_args(args: &[String], cmd_name: &str) -> HeadTailParseRes
             opts.quiet = true;
         } else if arg == "-v" || arg == "--verbose" {
             opts.verbose = true;
-        } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+        } else if arg.starts_with('-')
+            && arg.len() > 1
+            && arg[1..].chars().all(|c| c.is_ascii_digit())
+        {
             opts.lines = arg[1..].parse().unwrap_or(10);
         } else if arg.starts_with("--") {
-            return HeadTailParseResult::Err(CommandResult::error(
-                format!("{}: unrecognized option '{}'\n", cmd_name, arg)
-            ));
+            return HeadTailParseResult::Err(CommandResult::error(format!(
+                "{}: unrecognized option '{}'\n",
+                cmd_name, arg
+            )));
         } else if arg.starts_with('-') && arg != "-" {
-            return HeadTailParseResult::Err(CommandResult::error(
-                format!("{}: invalid option -- '{}'\n", cmd_name, &arg[1..])
-            ));
+            return HeadTailParseResult::Err(CommandResult::error(invalid_option(
+                cmd_name,
+                &arg[1..],
+            )));
         } else {
             opts.files.push(arg.clone());
         }
@@ -83,9 +90,10 @@ pub fn parse_head_tail_args(args: &[String], cmd_name: &str) -> HeadTailParseRes
     // 验证 bytes
     if let Some(bytes) = opts.bytes {
         if bytes == 0 {
-            return HeadTailParseResult::Err(CommandResult::error(
-                format!("{}: invalid number of bytes\n", cmd_name)
-            ));
+            return HeadTailParseResult::Err(CommandResult::error(format!(
+                "{}: invalid number of bytes\n",
+                cmd_name
+            )));
         }
     }
 
@@ -127,7 +135,7 @@ where
                 files_processed += 1;
             }
             Err(_) => {
-                stderr.push_str(&format!("{}: {}: No such file or directory\n", cmd_name, file));
+                stderr.push_str(&no_such_file(cmd_name, file));
                 exit_code = 1;
             }
         }
@@ -289,7 +297,10 @@ mod tests {
 
     #[test]
     fn test_parse_head_tail_args_quiet() {
-        let args: Vec<String> = vec!["-q", "file.txt"].into_iter().map(String::from).collect();
+        let args: Vec<String> = vec!["-q", "file.txt"]
+            .into_iter()
+            .map(String::from)
+            .collect();
         if let HeadTailParseResult::Ok(opts) = parse_head_tail_args(&args, "head") {
             assert!(opts.quiet);
             assert_eq!(opts.files, vec!["file.txt"]);

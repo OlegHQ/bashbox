@@ -1,6 +1,8 @@
 // src/commands/stat_cmd/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use crate::fs::resolve_under_cwd;
+use async_trait::async_trait;
 
 pub struct StatCommand;
 
@@ -24,22 +26,21 @@ fn format_mode_string(mode: u32, is_directory: bool) -> String {
     ];
     let mut s = String::with_capacity(10);
     s.push(type_char);
-    for p in &perms { s.push(*p); }
+    for p in &perms {
+        s.push(*p);
+    }
     s
-}
-
-fn resolve_path(cwd: &str, path: &str) -> String {
-    if path.starts_with('/') { path.to_string() }
-    else { format!("{}/{}", cwd.trim_end_matches('/'), path) }
 }
 
 #[async_trait]
 impl Command for StatCommand {
-    fn name(&self) -> &'static str { "stat" }
+    fn name(&self) -> &'static str {
+        "stat"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(HELP.into());
         }
 
@@ -68,7 +69,7 @@ impl Command for StatCommand {
         let mut has_error = false;
 
         for file in &files {
-            let full_path = resolve_path(&ctx.cwd, file);
+            let full_path = resolve_under_cwd(&ctx.cwd, file);
             match ctx.fs.stat(&full_path).await {
                 Ok(stat) => {
                     if let Some(ref fmt) = format {
@@ -78,7 +79,14 @@ impl Command for StatCommand {
                         output = output.replace("%n", file);
                         output = output.replace("%N", &format!("'{}'", file));
                         output = output.replace("%s", &stat.size.to_string());
-                        output = output.replace("%F", if stat.is_directory { "directory" } else { "regular file" });
+                        output = output.replace(
+                            "%F",
+                            if stat.is_directory {
+                                "directory"
+                            } else {
+                                "regular file"
+                            },
+                        );
                         output = output.replace("%a", &mode_octal);
                         output = output.replace("%A", &mode_str);
                         output = output.replace("%u", "1000");
@@ -93,12 +101,19 @@ impl Command for StatCommand {
                         stdout.push_str(&format!("  File: {}\n", file));
                         stdout.push_str(&format!("  Size: {}\t\tBlocks: {}\n", stat.size, blocks));
                         stdout.push_str(&format!("Access: ({}/{})\n", mode_octal, mode_str));
-                        let mtime_secs = stat.mtime.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                        let mtime_secs = stat
+                            .mtime
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
                         stdout.push_str(&format!("Modify: {}\n", mtime_secs));
                     }
                 }
                 Err(_) => {
-                    stderr.push_str(&format!("stat: cannot stat '{}': No such file or directory\n", file));
+                    stderr.push_str(&format!(
+                        "stat: cannot stat '{}': No such file or directory\n",
+                        file
+                    ));
                     has_error = true;
                 }
             }
@@ -111,108 +126,137 @@ impl Command for StatCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    fn make_ctx_with_fs(args: Vec<&str>, fs: Arc<InMemoryFs>) -> CommandContext {
-        CommandContext { args: args.into_iter().map(String::from).collect(), stdin: String::new(), cwd: "/".into(), env: HashMap::new(), fs, exec_fn: None, fetch_fn: None }
-    }
-
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        make_ctx_with_fs(args, Arc::new(InMemoryFs::new()))
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_file() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", "hello world".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["/test.txt"], fs)).await;
+        fs.write_file("/test.txt", "hello world".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["/test.txt"], fs))
+            .await;
         assert!(r.stdout.contains("File: /test.txt"));
         assert!(r.stdout.contains("Size: 11"));
         assert_eq!(r.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_directory() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/mydir/file.txt", "content".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["/mydir"], fs)).await;
+        fs.write_file("/mydir/file.txt", "content".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["/mydir"], fs))
+            .await;
         assert!(r.stdout.contains("File: /mydir"));
         assert!(r.stdout.contains("drwx"));
         assert_eq!(r.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_missing() {
         let r = StatCommand.execute(make_ctx(vec!["/nonexistent"])).await;
         assert!(r.stderr.contains("No such file or directory"));
         assert_eq!(r.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_no_operand() {
         let r = StatCommand.execute(make_ctx(vec![])).await;
         assert!(r.stderr.contains("missing operand"));
         assert_eq!(r.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_format_name() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", "hello".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["-c", "%n", "/test.txt"], fs)).await;
+        fs.write_file("/test.txt", "hello".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["-c", "%n", "/test.txt"], fs))
+            .await;
         assert_eq!(r.stdout.trim(), "/test.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_format_size() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", "hello".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["-c", "%s", "/test.txt"], fs)).await;
+        fs.write_file("/test.txt", "hello".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["-c", "%s", "/test.txt"], fs))
+            .await;
         assert_eq!(r.stdout.trim(), "5");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_format_type() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/mydir/file.txt", "content".as_bytes()).await.unwrap();
-        let r1 = StatCommand.execute(make_ctx_with_fs(vec!["-c", "%F", "/mydir/file.txt"], fs.clone())).await;
+        fs.write_file("/mydir/file.txt", "content".as_bytes())
+            .await
+            .unwrap();
+        let r1 = StatCommand
+            .execute(make_ctx_with_fs(
+                vec!["-c", "%F", "/mydir/file.txt"],
+                fs.clone(),
+            ))
+            .await;
         assert_eq!(r1.stdout.trim(), "regular file");
-        let r2 = StatCommand.execute(make_ctx_with_fs(vec!["-c", "%F", "/mydir"], fs)).await;
+        let r2 = StatCommand
+            .execute(make_ctx_with_fs(vec!["-c", "%F", "/mydir"], fs))
+            .await;
         assert_eq!(r2.stdout.trim(), "directory");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_format_combined() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", "hello world".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["-c", "%n: %s bytes", "/test.txt"], fs)).await;
+        fs.write_file("/test.txt", "hello world".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(
+                vec!["-c", "%n: %s bytes", "/test.txt"],
+                fs,
+            ))
+            .await;
         assert_eq!(r.stdout.trim(), "/test.txt: 11 bytes");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_help() {
         let r = StatCommand.execute(make_ctx(vec!["--help"])).await;
         assert!(r.stdout.contains("stat"));
         assert!(r.stdout.contains("-c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_multiple_files() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/a.txt", "aaa".as_bytes()).await.unwrap();
         fs.write_file("/b.txt", "bbbbb".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["/a.txt", "/b.txt"], fs)).await;
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["/a.txt", "/b.txt"], fs))
+            .await;
         assert!(r.stdout.contains("File: /a.txt"));
         assert!(r.stdout.contains("File: /b.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_continue_on_error() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/exists.txt", "yes".as_bytes()).await.unwrap();
-        let r = StatCommand.execute(make_ctx_with_fs(vec!["/exists.txt", "/missing.txt"], fs)).await;
+        fs.write_file("/exists.txt", "yes".as_bytes())
+            .await
+            .unwrap();
+        let r = StatCommand
+            .execute(make_ctx_with_fs(vec!["/exists.txt", "/missing.txt"], fs))
+            .await;
         assert!(r.stdout.contains("File: /exists.txt"));
         assert!(r.stderr.contains("missing.txt"));
         assert_eq!(r.exit_code, 1);

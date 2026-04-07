@@ -87,13 +87,19 @@ mod tests {
     fn test_tilde_unknown_user() {
         let state = make_state_with_home(Some("/home/user"));
         assert_eq!(apply_tilde_expansion(&state, "~unknown"), "~unknown");
-        assert_eq!(apply_tilde_expansion(&state, "~unknown/dir"), "~unknown/dir");
+        assert_eq!(
+            apply_tilde_expansion(&state, "~unknown/dir"),
+            "~unknown/dir"
+        );
     }
 
     #[test]
     fn test_no_tilde() {
         let state = make_state_with_home(Some("/home/user"));
-        assert_eq!(apply_tilde_expansion(&state, "/path/to/file"), "/path/to/file");
+        assert_eq!(
+            apply_tilde_expansion(&state, "/path/to/file"),
+            "/path/to/file"
+        );
         assert_eq!(apply_tilde_expansion(&state, "plain"), "plain");
     }
 

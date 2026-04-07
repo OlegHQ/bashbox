@@ -1,7 +1,8 @@
 // src/commands/touch/mod.rs
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::{Command, CommandContext, CommandResult};
 use async_trait::async_trait;
 use std::time::SystemTime;
-use crate::commands::{Command, CommandContext, CommandResult};
 
 pub struct TouchCommand;
 
@@ -12,14 +13,15 @@ impl Command for TouchCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: touch [OPTION]... FILE...\n\n\
                  Update the access and modification times of each FILE to the current time.\n\n\
                  Options:\n\
                    -c, --no-create    do not create any files\n\
                    -d, --date=STRING  parse STRING and use it instead of current time\n\
-                       --help         display this help and exit\n".to_string()
+                       --help         display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -101,23 +103,9 @@ impl Command for TouchCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_touch_create_file() {
         let ctx = make_ctx(vec!["/newfile.txt"]);
         let fs = ctx.fs.clone();
@@ -127,7 +115,7 @@ mod tests {
         assert!(fs.exists("/newfile.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_touch_no_create() {
         let ctx = make_ctx(vec!["-c", "/nonexistent.txt"]);
         let fs = ctx.fs.clone();
@@ -137,7 +125,7 @@ mod tests {
         assert!(!fs.exists("/nonexistent.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_touch_missing_operand() {
         let ctx = make_ctx(vec![]);
         let cmd = TouchCommand;
@@ -146,7 +134,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_touch_multiple_files() {
         let ctx = make_ctx(vec!["/a.txt", "/b.txt"]);
         let fs = ctx.fs.clone();

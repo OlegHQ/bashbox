@@ -12,21 +12,9 @@
 //!
 //! Returns 0 if option found, 1 if end of options or error.
 
-use crate::interpreter::types::InterpreterState;
 use super::break_cmd::BuiltinResult;
-
-/// Check if a string is a valid variable name.
-fn is_valid_var_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
+use crate::interpreter::helpers::identifier::is_valid_identifier;
+use crate::interpreter::types::InterpreterState;
 
 /// Handle the getopts builtin command.
 ///
@@ -39,18 +27,25 @@ fn is_valid_var_name(name: &str) -> bool {
 pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinResult {
     // Need at least optstring and name
     if args.len() < 2 {
-        return BuiltinResult::failure("bash: getopts: usage: getopts optstring name [arg ...]\n", 1);
+        return BuiltinResult::failure(
+            "bash: getopts: usage: getopts optstring name [arg ...]\n",
+            1,
+        );
     }
 
     let optstring = &args[0];
     let var_name = &args[1];
 
     // Check if variable name is valid
-    let invalid_var_name = !is_valid_var_name(var_name);
+    let invalid_var_name = !is_valid_identifier(var_name);
 
     // Determine if silent mode (optstring starts with ':')
     let silent_mode = optstring.starts_with(':');
-    let actual_optstring = if silent_mode { &optstring[1..] } else { optstring.as_str() };
+    let actual_optstring = if silent_mode {
+        &optstring[1..]
+    } else {
+        optstring.as_str()
+    };
 
     // Get arguments to parse - either explicit args or positional parameters
     let args_to_process: Vec<String> = if args.len() > 2 {
@@ -58,16 +53,16 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         args[2..].to_vec()
     } else {
         // Use positional parameters
-        let param_count: i32 = state.env.get("#")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        let param_count: i32 = state.env.get("#").and_then(|s| s.parse().ok()).unwrap_or(0);
         (1..=param_count)
             .map(|i| state.env.get(&i.to_string()).cloned().unwrap_or_default())
             .collect()
     };
 
     // Get current OPTIND (1-based, default 1)
-    let mut optind: i32 = state.env.get("OPTIND")
+    let mut optind: i32 = state
+        .env
+        .get("OPTIND")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
     if optind < 1 {
@@ -75,7 +70,9 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
     }
 
     // Get the "char index" within the current argument for combined options like -abc
-    let char_index: usize = state.env.get("__GETOPTS_CHARINDEX")
+    let char_index: usize = state
+        .env
+        .get("__GETOPTS_CHARINDEX")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -87,8 +84,13 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         if !invalid_var_name {
             state.env.insert(var_name.clone(), "?".to_string());
         }
-        state.env.insert("OPTIND".to_string(), (args_to_process.len() + 1).to_string());
-        state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+        state.env.insert(
+            "OPTIND".to_string(),
+            (args_to_process.len() + 1).to_string(),
+        );
+        state
+            .env
+            .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         return BuiltinResult {
             stdout: String::new(),
             stderr: String::new(),
@@ -114,8 +116,12 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
     // Check for -- (end of options marker)
     if current_arg == "--" {
-        state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-        state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+        state
+            .env
+            .insert("OPTIND".to_string(), (optind + 1).to_string());
+        state
+            .env
+            .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         if !invalid_var_name {
             state.env.insert(var_name.clone(), "?".to_string());
         }
@@ -135,8 +141,12 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         Some(c) => c,
         None => {
             // No more characters in this argument, move to next
-            state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+            state
+                .env
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            state
+                .env
+                .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
             // Recursively call to process next argument
             return handle_getopts(state, args);
         }
@@ -158,11 +168,18 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
         // Move to next character or next argument
         if start_index + 1 < current_arg.len() {
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), (start_index + 1).to_string());
+            state.env.insert(
+                "__GETOPTS_CHARINDEX".to_string(),
+                (start_index + 1).to_string(),
+            );
             state.env.insert("OPTIND".to_string(), optind.to_string());
         } else {
-            state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+            state
+                .env
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            state
+                .env
+                .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         }
 
         return BuiltinResult {
@@ -182,9 +199,16 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         // Check if there are more characters in the current arg (e.g., -cVALUE)
         if start_index + 1 < current_arg.len() {
             // Rest of current arg is the argument
-            state.env.insert("OPTARG".to_string(), current_arg[start_index + 1..].to_string());
-            state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+            state.env.insert(
+                "OPTARG".to_string(),
+                current_arg[start_index + 1..].to_string(),
+            );
+            state
+                .env
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            state
+                .env
+                .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         } else {
             // Next argument is the option argument
             if optind as usize >= args_to_process.len() {
@@ -201,27 +225,45 @@ pub fn handle_getopts(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                     }
                     String::new()
                 };
-                state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-                state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+                state
+                    .env
+                    .insert("OPTIND".to_string(), (optind + 1).to_string());
+                state
+                    .env
+                    .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
                 return BuiltinResult {
                     stdout: String::new(),
                     stderr: stderr_msg,
                     exit_code: if invalid_var_name { 2 } else { 0 },
                 };
             }
-            state.env.insert("OPTARG".to_string(), args_to_process[optind as usize].clone());
-            state.env.insert("OPTIND".to_string(), (optind + 2).to_string());
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+            state.env.insert(
+                "OPTARG".to_string(),
+                args_to_process[optind as usize].clone(),
+            );
+            state
+                .env
+                .insert("OPTIND".to_string(), (optind + 2).to_string());
+            state
+                .env
+                .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         }
     } else {
         // Option doesn't require an argument
         // Move to next character or next argument
         if start_index + 1 < current_arg.len() {
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), (start_index + 1).to_string());
+            state.env.insert(
+                "__GETOPTS_CHARINDEX".to_string(),
+                (start_index + 1).to_string(),
+            );
             state.env.insert("OPTIND".to_string(), optind.to_string());
         } else {
-            state.env.insert("OPTIND".to_string(), (optind + 1).to_string());
-            state.env.insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
+            state
+                .env
+                .insert("OPTIND".to_string(), (optind + 1).to_string());
+            state
+                .env
+                .insert("__GETOPTS_CHARINDEX".to_string(), "0".to_string());
         }
     }
 
@@ -244,11 +286,10 @@ mod tests {
     #[test]
     fn test_getopts_simple_option() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            "ab".to_string(),
-            "opt".to_string(),
-            "-a".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &["ab".to_string(), "opt".to_string(), "-a".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "a");
         assert_eq!(state.env.get("OPTIND").unwrap(), "2");
@@ -257,12 +298,15 @@ mod tests {
     #[test]
     fn test_getopts_option_with_argument() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            "a:".to_string(),
-            "opt".to_string(),
-            "-a".to_string(),
-            "value".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &[
+                "a:".to_string(),
+                "opt".to_string(),
+                "-a".to_string(),
+                "value".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "a");
         assert_eq!(state.env.get("OPTARG").unwrap(), "value");
@@ -274,20 +318,18 @@ mod tests {
         let mut state = InterpreterState::default();
 
         // First call: -ab should return 'a'
-        let result = handle_getopts(&mut state, &[
-            "ab".to_string(),
-            "opt".to_string(),
-            "-ab".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &["ab".to_string(), "opt".to_string(), "-ab".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "a");
 
         // Second call: should return 'b'
-        let result = handle_getopts(&mut state, &[
-            "ab".to_string(),
-            "opt".to_string(),
-            "-ab".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &["ab".to_string(), "opt".to_string(), "-ab".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "b");
     }
@@ -295,11 +337,10 @@ mod tests {
     #[test]
     fn test_getopts_invalid_option() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            "ab".to_string(),
-            "opt".to_string(),
-            "-c".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &["ab".to_string(), "opt".to_string(), "-c".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "?");
         assert!(result.stderr.contains("illegal option"));
@@ -308,11 +349,10 @@ mod tests {
     #[test]
     fn test_getopts_silent_mode() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            ":ab".to_string(),
-            "opt".to_string(),
-            "-c".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &[":ab".to_string(), "opt".to_string(), "-c".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "?");
         assert_eq!(state.env.get("OPTARG").unwrap(), "c");
@@ -322,12 +362,15 @@ mod tests {
     #[test]
     fn test_getopts_end_of_options() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            "ab".to_string(),
-            "opt".to_string(),
-            "--".to_string(),
-            "-a".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &[
+                "ab".to_string(),
+                "opt".to_string(),
+                "--".to_string(),
+                "-a".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 1);
         assert_eq!(state.env.get("opt").unwrap(), "?");
     }
@@ -335,11 +378,10 @@ mod tests {
     #[test]
     fn test_getopts_missing_argument() {
         let mut state = InterpreterState::default();
-        let result = handle_getopts(&mut state, &[
-            "a:".to_string(),
-            "opt".to_string(),
-            "-a".to_string(),
-        ]);
+        let result = handle_getopts(
+            &mut state,
+            &["a:".to_string(), "opt".to_string(), "-a".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("opt").unwrap(), "?");
         assert!(result.stderr.contains("requires an argument"));

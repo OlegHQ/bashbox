@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct ColumnCommand;
 
@@ -20,10 +21,15 @@ fn split_fields(line: &str, separator: Option<&str>, no_merge: bool) -> Vec<Stri
         if no_merge {
             line.split(sep).map(|s| s.to_string()).collect()
         } else {
-            line.split(sep).filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
+            line.split(sep)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect()
         }
     } else if no_merge {
-        line.split(|c| c == ' ' || c == '\t').map(|s| s.to_string()).collect()
+        line.split(|c| c == ' ' || c == '\t')
+            .map(|s| s.to_string())
+            .collect()
     } else {
         line.split_whitespace().map(|s| s.to_string()).collect()
     }
@@ -162,10 +168,7 @@ impl Command for ColumnCommand {
                     match ctx.fs.read_file(&path).await {
                         Ok(c) => parts.push(c),
                         Err(_) => {
-                            return CommandResult::error(format!(
-                                "column: {}: No such file or directory\n",
-                                file
-                            ));
+                            return CommandResult::error(no_such_file("column", file));
                         }
                     }
                 }
@@ -209,9 +212,9 @@ impl Command for ColumnCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -225,7 +228,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = ColumnCommand.execute(ctx).await;
@@ -233,7 +236,7 @@ mod tests {
         assert!(result.stdout.contains("-t"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_input() {
         let ctx = create_ctx(vec![]);
         let result = ColumnCommand.execute(ctx).await;
@@ -241,7 +244,7 @@ mod tests {
         assert!(result.stdout.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_table_mode() {
         let mut ctx = create_ctx(vec!["-t"]);
         ctx.stdin = "a b c\n1 2 3\n".to_string();
@@ -250,7 +253,7 @@ mod tests {
         assert!(result.stdout.contains("1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_fill_mode() {
         let mut ctx = create_ctx(vec![]);
         ctx.stdin = "a\nb\nc\nd\n".to_string();

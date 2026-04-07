@@ -8,32 +8,18 @@
 //!   export NAME         - Export existing variable (or create empty)
 //!   export -n NAME      - Un-export variable (remove from env)
 
+use super::break_cmd::BuiltinResult;
+use crate::interpreter::helpers::identifier::is_valid_identifier;
 use crate::interpreter::helpers::readonly::{mark_exported, unmark_exported};
 use crate::interpreter::helpers::tilde::expand_tildes_in_value;
 use crate::interpreter::types::InterpreterState;
-use super::break_cmd::BuiltinResult;
-
-/// Check if a string is a valid variable name.
-fn is_valid_var_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let mut chars = name.chars();
-    // First char must be letter or underscore
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    // Rest must be alphanumeric or underscore
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
 
 /// Parse append syntax: NAME+=value
 /// Returns (name, value) if it matches, None otherwise.
 fn parse_append_syntax(arg: &str) -> Option<(&str, &str)> {
     if let Some(plus_eq_idx) = arg.find("+=") {
         let name = &arg[..plus_eq_idx];
-        if is_valid_var_name(name) {
+        if is_valid_identifier(name) {
             let value = &arg[plus_eq_idx + 2..];
             return Some((name, value));
         }
@@ -142,8 +128,11 @@ pub fn handle_export(state: &mut InterpreterState, args: &[String]) -> BuiltinRe
         }
 
         // Validate variable name: must start with letter/underscore, contain only alphanumeric/_
-        if !is_valid_var_name(&name) {
-            stderr.push_str(&format!("bash: export: `{}': not a valid identifier\n", arg));
+        if !is_valid_identifier(&name) {
+            stderr.push_str(&format!(
+                "bash: export: `{}': not a valid identifier\n",
+                arg
+            ));
             exit_code = 1;
             continue;
         }
@@ -254,7 +243,9 @@ mod tests {
     #[test]
     fn test_export_tilde_expansion() {
         let mut state = InterpreterState::default();
-        state.env.insert("HOME".to_string(), "/home/user".to_string());
+        state
+            .env
+            .insert("HOME".to_string(), "/home/user".to_string());
 
         let result = handle_export(&mut state, &["PATH=~/bin:/usr/bin".to_string()]);
         assert_eq!(result.exit_code, 0);
@@ -262,13 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_var_name() {
-        assert!(is_valid_var_name("FOO"));
-        assert!(is_valid_var_name("_foo"));
-        assert!(is_valid_var_name("foo123"));
-        assert!(is_valid_var_name("_123"));
-        assert!(!is_valid_var_name("123foo"));
-        assert!(!is_valid_var_name(""));
-        assert!(!is_valid_var_name("foo-bar"));
+    fn test_is_valid_identifier() {
+        assert!(is_valid_identifier("FOO"));
+        assert!(is_valid_identifier("_foo"));
+        assert!(is_valid_identifier("foo123"));
+        assert!(is_valid_identifier("_123"));
+        assert!(!is_valid_identifier("123foo"));
+        assert!(!is_valid_identifier(""));
+        assert!(!is_valid_identifier("foo-bar"));
     }
 }

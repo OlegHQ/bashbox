@@ -49,7 +49,12 @@ pub fn compare_strings(op: StringCompareOp, left: &str, right: &str) -> bool {
 }
 
 /// Compare two strings with case-insensitive option.
-pub fn compare_strings_nocase(op: StringCompareOp, left: &str, right: &str, nocasematch: bool) -> bool {
+pub fn compare_strings_nocase(
+    op: StringCompareOp,
+    left: &str,
+    right: &str,
+    nocasematch: bool,
+) -> bool {
     let is_equal = if nocasematch {
         left.eq_ignore_ascii_case(right)
     } else {
@@ -128,7 +133,15 @@ where
     F: Fn(&str, &str, bool) -> bool,
 {
     StringCompareOp::from_str(op).map(|op| {
-        compare_strings_with_pattern(op, left, right, use_pattern, nocasematch, extglob, pattern_matcher)
+        compare_strings_with_pattern(
+            op,
+            left,
+            right,
+            use_pattern,
+            nocasematch,
+            extglob,
+            pattern_matcher,
+        )
     })
 }
 
@@ -155,9 +168,24 @@ mod tests {
 
     #[test]
     fn test_compare_strings_nocase() {
-        assert!(compare_strings_nocase(StringCompareOp::Eq, "Hello", "hello", true));
-        assert!(!compare_strings_nocase(StringCompareOp::Eq, "Hello", "hello", false));
-        assert!(compare_strings_nocase(StringCompareOp::Ne, "Hello", "world", true));
+        assert!(compare_strings_nocase(
+            StringCompareOp::Eq,
+            "Hello",
+            "hello",
+            true
+        ));
+        assert!(!compare_strings_nocase(
+            StringCompareOp::Eq,
+            "Hello",
+            "hello",
+            false
+        ));
+        assert!(compare_strings_nocase(
+            StringCompareOp::Ne,
+            "Hello",
+            "world",
+            true
+        ));
     }
 
     #[test]

@@ -401,6 +401,9 @@ mod tests {
     #[test]
     fn test_non_printing_delimiters() {
         let state = make_state();
-        assert_eq!(expand_prompt(&state, "\\[\\e[32m\\]test\\[\\e[0m\\]"), "\x1b[32mtest\x1b[0m");
+        assert_eq!(
+            expand_prompt(&state, "\\[\\e[32m\\]test\\[\\e[0m\\]"),
+            "\x1b[32mtest\x1b[0m"
+        );
     }
 }

@@ -4,6 +4,7 @@
 //! popd - Pop directory from stack and cd to previous
 //! dirs [-clpv] - Display directory stack
 
+use crate::fs::path::normalize_path;
 use crate::interpreter::types::InterpreterState;
 
 /// Result type for builtin commands
@@ -28,22 +29,6 @@ fn format_path(path: &str, home: &str) -> String {
     path.to_string()
 }
 
-/// Normalize a path by resolving . and ..
-fn normalize_path(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    let mut result: Vec<&str> = Vec::new();
-
-    for part in parts {
-        if part == ".." {
-            result.pop();
-        } else {
-            result.push(part);
-        }
-    }
-
-    format!("/{}", result.join("/"))
-}
-
 /// Handle the `pushd` builtin command.
 ///
 /// pushd [dir] - Push current dir, cd to dir
@@ -60,16 +45,28 @@ pub fn handle_pushd(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
         if arg == "--" {
             if i + 1 < args.len() {
                 if target_dir.is_some() {
-                    return (String::new(), "bash: pushd: too many arguments\n".to_string(), 2);
+                    return (
+                        String::new(),
+                        "bash: pushd: too many arguments\n".to_string(),
+                        2,
+                    );
                 }
                 target_dir = Some(args[i + 1].clone());
                 i += 1;
             }
         } else if arg.starts_with('-') && arg != "-" {
-            return (String::new(), format!("bash: pushd: {}: invalid option\n", arg), 2);
+            return (
+                String::new(),
+                format!("bash: pushd: {}: invalid option\n", arg),
+                2,
+            );
         } else {
             if target_dir.is_some() {
-                return (String::new(), "bash: pushd: too many arguments\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "bash: pushd: too many arguments\n".to_string(),
+                    2,
+                );
             }
             target_dir = Some(arg.clone());
         }
@@ -81,7 +78,11 @@ pub fn handle_pushd(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
     if target_dir.is_none() {
         // No dir specified - swap top two entries if possible
         if stack.len() < 2 {
-            return (String::new(), "bash: pushd: no other directory\n".to_string(), 1);
+            return (
+                String::new(),
+                "bash: pushd: no other directory\n".to_string(),
+                1,
+            );
         }
         stack.swap(0, 1);
         target_dir = Some(stack[0].clone());
@@ -102,7 +103,11 @@ pub fn handle_pushd(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
     } else if target == "." {
         state.cwd.clone()
     } else if target.starts_with('~') {
-        let home = state.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string());
+        let home = state
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/".to_string());
         format!("{}{}", home, &target[1..])
     } else {
         format!("{}/{}", state.cwd, target)
@@ -123,7 +128,9 @@ pub fn handle_pushd(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
     state.previous_dir = state.cwd.clone();
     state.cwd = resolved_dir.clone();
     state.env.insert("PWD".to_string(), resolved_dir.clone());
-    state.env.insert("OLDPWD".to_string(), state.previous_dir.clone());
+    state
+        .env
+        .insert("OLDPWD".to_string(), state.previous_dir.clone());
 
     // Output the stack (pushd DOES do tilde substitution)
     let home = state.env.get("HOME").cloned().unwrap_or_default();
@@ -147,16 +154,28 @@ pub fn handle_popd(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
             continue;
         }
         if arg.starts_with('-') && arg != "-" {
-            return (String::new(), format!("bash: popd: {}: invalid option\n", arg), 2);
+            return (
+                String::new(),
+                format!("bash: popd: {}: invalid option\n", arg),
+                2,
+            );
         }
         // popd doesn't take positional arguments
-        return (String::new(), "bash: popd: too many arguments\n".to_string(), 2);
+        return (
+            String::new(),
+            "bash: popd: too many arguments\n".to_string(),
+            2,
+        );
     }
 
     let stack = get_stack(state);
 
     if stack.is_empty() {
-        return (String::new(), "bash: popd: directory stack empty\n".to_string(), 1);
+        return (
+            String::new(),
+            "bash: popd: directory stack empty\n".to_string(),
+            1,
+        );
     }
 
     // Pop the top entry and cd to it
@@ -166,7 +185,9 @@ pub fn handle_popd(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
     state.previous_dir = state.cwd.clone();
     state.cwd = new_dir.clone();
     state.env.insert("PWD".to_string(), new_dir.clone());
-    state.env.insert("OLDPWD".to_string(), state.previous_dir.clone());
+    state
+        .env
+        .insert("OLDPWD".to_string(), state.previous_dir.clone());
 
     // Output the stack (popd DOES do tilde substitution)
     let home = state.env.get("HOME").cloned().unwrap_or_default();
@@ -209,13 +230,21 @@ pub fn handle_dirs(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
                         with_numbers = true;
                     }
                     _ => {
-                        return (String::new(), format!("bash: dirs: -{}: invalid option\n", flag), 2);
+                        return (
+                            String::new(),
+                            format!("bash: dirs: -{}: invalid option\n", flag),
+                            2,
+                        );
                     }
                 }
             }
         } else {
             // dirs doesn't take positional arguments
-            return (String::new(), "bash: dirs: too many arguments\n".to_string(), 1);
+            return (
+                String::new(),
+                "bash: dirs: too many arguments\n".to_string(),
+                1,
+            );
         }
     }
 
@@ -237,7 +266,11 @@ pub fn handle_dirs(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let path = if long_format { p.clone() } else { format_path(p, &home) };
+                let path = if long_format {
+                    p.clone()
+                } else {
+                    format_path(p, &home)
+                };
                 format!(" {}  {}", i, path)
             })
             .collect();
@@ -245,13 +278,25 @@ pub fn handle_dirs(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
     } else if per_line {
         let lines: Vec<String> = full_stack
             .iter()
-            .map(|p| if long_format { p.clone() } else { format_path(p, &home) })
+            .map(|p| {
+                if long_format {
+                    p.clone()
+                } else {
+                    format_path(p, &home)
+                }
+            })
             .collect();
         format!("{}\n", lines.join("\n"))
     } else {
         let parts: Vec<String> = full_stack
             .iter()
-            .map(|p| if long_format { p.clone() } else { format_path(p, &home) })
+            .map(|p| {
+                if long_format {
+                    p.clone()
+                } else {
+                    format_path(p, &home)
+                }
+            })
             .collect();
         format!("{}\n", parts.join(" "))
     };
@@ -296,7 +341,9 @@ mod tests {
     fn test_handle_dirs_with_tilde() {
         let mut state = InterpreterState::default();
         state.cwd = "/home/user".to_string();
-        state.env.insert("HOME".to_string(), "/home/user".to_string());
+        state
+            .env
+            .insert("HOME".to_string(), "/home/user".to_string());
         let (stdout, _, code) = handle_dirs(&mut state, &[]);
         assert_eq!(code, 0);
         assert_eq!(stdout, "~\n");
@@ -306,7 +353,9 @@ mod tests {
     fn test_handle_dirs_long_format() {
         let mut state = InterpreterState::default();
         state.cwd = "/home/user".to_string();
-        state.env.insert("HOME".to_string(), "/home/user".to_string());
+        state
+            .env
+            .insert("HOME".to_string(), "/home/user".to_string());
         let (stdout, _, code) = handle_dirs(&mut state, &["-l".to_string()]);
         assert_eq!(code, 0);
         assert_eq!(stdout, "/home/user\n");

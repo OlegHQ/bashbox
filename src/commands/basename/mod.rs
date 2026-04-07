@@ -1,6 +1,7 @@
 // src/commands/basename/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct BasenameCommand;
 
@@ -14,14 +15,15 @@ impl Command for BasenameCommand {
         let args = &ctx.args;
 
         // 检查 --help
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: basename NAME [SUFFIX]\n       basename OPTION... NAME...\n\n\
                  Strip directory and suffix from filenames.\n\n\
                  Options:\n\
                    -a, --multiple   support multiple arguments\n\
                    -s, --suffix=SUFFIX  remove a trailing SUFFIX\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -82,23 +84,9 @@ impl Command for BasenameCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basename_simple() {
         let cmd = BasenameCommand;
         let result = cmd.execute(make_ctx(vec!["/usr/bin/sort"])).await;
@@ -106,7 +94,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basename_with_suffix() {
         let cmd = BasenameCommand;
         let result = cmd.execute(make_ctx(vec!["include/stdio.h", ".h"])).await;
@@ -114,7 +102,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basename_trailing_slash() {
         let cmd = BasenameCommand;
         let result = cmd.execute(make_ctx(vec!["/usr/"])).await;
@@ -122,7 +110,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basename_missing_operand() {
         let cmd = BasenameCommand;
         let result = cmd.execute(make_ctx(vec![])).await;
@@ -130,10 +118,12 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basename_multiple() {
         let cmd = BasenameCommand;
-        let result = cmd.execute(make_ctx(vec!["-a", "/usr/bin/sort", "/usr/bin/ls"])).await;
+        let result = cmd
+            .execute(make_ctx(vec!["-a", "/usr/bin/sort", "/usr/bin/ls"]))
+            .await;
         assert_eq!(result.stdout, "sort\nls\n");
         assert_eq!(result.exit_code, 0);
     }

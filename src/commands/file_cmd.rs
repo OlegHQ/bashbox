@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct FileCommand;
 
@@ -70,14 +71,24 @@ fn detect_type_by_content(content: &str, filename: &str) -> (&'static str, &'sta
         if first_line.contains("python") {
             return ("Python script, ASCII text executable", "text/x-python");
         }
-        if first_line.contains("node") || first_line.contains("bun") || first_line.contains("deno") {
-            return ("JavaScript script, ASCII text executable", "text/javascript");
+        if first_line.contains("node") || first_line.contains("bun") || first_line.contains("deno")
+        {
+            return (
+                "JavaScript script, ASCII text executable",
+                "text/javascript",
+            );
         }
         if first_line.contains("bash") {
-            return ("Bourne-Again shell script, ASCII text executable", "text/x-shellscript");
+            return (
+                "Bourne-Again shell script, ASCII text executable",
+                "text/x-shellscript",
+            );
         }
         if first_line.contains("sh") {
-            return ("POSIX shell script, ASCII text executable", "text/x-shellscript");
+            return (
+                "POSIX shell script, ASCII text executable",
+                "text/x-shellscript",
+            );
         }
         if first_line.contains("ruby") {
             return ("Ruby script, ASCII text executable", "text/x-ruby");
@@ -89,7 +100,9 @@ fn detect_type_by_content(content: &str, filename: &str) -> (&'static str, &'sta
     if trimmed.starts_with("<?xml") {
         return ("XML document", "application/xml");
     }
-    if trimmed.to_lowercase().starts_with("<!doctype html") || trimmed.to_lowercase().starts_with("<html") {
+    if trimmed.to_lowercase().starts_with("<!doctype html")
+        || trimmed.to_lowercase().starts_with("<html")
+    {
         return ("HTML document", "text/html");
     }
 
@@ -131,7 +144,12 @@ impl Command for FileCommand {
                             'b' => brief = true,
                             'i' => mime_mode = true,
                             'L' => {}
-                            _ => return CommandResult::error(format!("file: invalid option -- '{}'\n", c)),
+                            _ => {
+                                return CommandResult::error(invalid_option(
+                                    "file",
+                                    c.encode_utf8(&mut [0u8; 4]),
+                                ))
+                            }
                         }
                     }
                 }
@@ -151,7 +169,11 @@ impl Command for FileCommand {
             match ctx.fs.stat(&path).await {
                 Ok(stat) => {
                     if stat.is_directory {
-                        let result = if mime_mode { "inode/directory" } else { "directory" };
+                        let result = if mime_mode {
+                            "inode/directory"
+                        } else {
+                            "directory"
+                        };
                         if brief {
                             output.push_str(&format!("{}\n", result));
                         } else {
@@ -172,7 +194,10 @@ impl Command for FileCommand {
                     if brief {
                         output.push_str("cannot open\n");
                     } else {
-                        output.push_str(&format!("{}: cannot open (No such file or directory)\n", file));
+                        output.push_str(&format!(
+                            "{}: cannot open (No such file or directory)\n",
+                            file
+                        ));
                     }
                     exit_code = 1;
                 }
@@ -186,9 +211,9 @@ impl Command for FileCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::{InMemoryFs, FileSystem};
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -202,7 +227,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = FileCommand.execute(ctx).await;
@@ -210,14 +235,14 @@ mod tests {
         assert!(result.stdout.contains("-b"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_no_args() {
         let ctx = create_ctx(vec![]);
         let result = FileCommand.execute(ctx).await;
         assert!(result.stderr.contains("Usage"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_text_file() {
         let mut ctx = create_ctx(vec!["/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -227,7 +252,7 @@ mod tests {
         assert!(result.stdout.contains("text"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_directory() {
         let mut ctx = create_ctx(vec!["/"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -236,7 +261,7 @@ mod tests {
         assert!(result.stdout.contains("directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_not_found() {
         let ctx = create_ctx(vec!["/nonexistent"]);
         let result = FileCommand.execute(ctx).await;

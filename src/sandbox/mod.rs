@@ -1,5 +1,8 @@
-pub mod types;
 pub mod sandbox;
+pub mod types;
 
-pub use types::{SandboxOptions, SandboxCommand, RunCommandOptions, FileContent, FileEncoding, OutputMessage, OutputType};
 pub use sandbox::Sandbox;
+pub use types::{
+    FileContent, FileEncoding, OutputMessage, OutputType, RunCommandOptions, SandboxCommand,
+    SandboxOptions,
+};

@@ -2,9 +2,11 @@
 //!
 //! Handles execution of subshells (...), groups { ...; }, and user scripts
 
-use std::collections::HashMap;
+use brush_parser::ast as bast;
+
+use crate::interpreter::errors::{ControlFlowError, InterpreterError};
 use crate::interpreter::types::{ExecResult, InterpreterState, LocalVarStackEntry, ShellOptions};
-use crate::interpreter::errors::{InterpreterError, ControlFlowError};
+use std::collections::HashMap;
 
 /// Saved state for subshell execution.
 /// Used to restore the parent environment after subshell completes.
@@ -277,14 +279,20 @@ impl CompoundResult {
 
 /// Execute a subshell node (...).
 /// Creates an isolated execution environment that doesn't affect the parent.
+///
+/// Accepts `&[&bast::CompoundListItem]` — the items from a `bast::CompoundList`.
+/// Each item is an `(AndOrList, SeparatorOperator)` tuple struct.
 pub fn execute_subshell<F>(
     state: &mut InterpreterState,
-    body: &[crate::StatementNode],
+    body: &[&bast::CompoundListItem],
     stdin: Option<&str>,
     mut execute_statement: F,
 ) -> Result<ExecResult, InterpreterError>
 where
-    F: FnMut(&mut InterpreterState, &crate::StatementNode) -> Result<ExecResult, InterpreterError>,
+    F: FnMut(
+        &mut InterpreterState,
+        &bast::CompoundListItem,
+    ) -> Result<ExecResult, InterpreterError>,
 {
     let saved = prepare_subshell(state, stdin);
 
@@ -363,14 +371,19 @@ where
 
 /// Execute a group node { ...; }.
 /// Runs commands in the current execution environment.
+///
+/// Accepts `&[&bast::CompoundListItem]` — the items from a `bast::CompoundList`.
 pub fn execute_group<F>(
     state: &mut InterpreterState,
-    body: &[crate::StatementNode],
+    body: &[&bast::CompoundListItem],
     stdin: Option<&str>,
     mut execute_statement: F,
 ) -> Result<ExecResult, InterpreterError>
 where
-    F: FnMut(&mut InterpreterState, &crate::StatementNode) -> Result<ExecResult, InterpreterError>,
+    F: FnMut(
+        &mut InterpreterState,
+        &bast::CompoundListItem,
+    ) -> Result<ExecResult, InterpreterError>,
 {
     let saved = prepare_group(state, stdin);
 
@@ -528,7 +541,10 @@ mod tests {
     #[test]
     fn test_parse_shebang() {
         assert_eq!(parse_shebang("#!/bin/bash\necho hello"), Some("/bin/bash"));
-        assert_eq!(parse_shebang("#!/usr/bin/env bash\necho hello"), Some("/usr/bin/env bash"));
+        assert_eq!(
+            parse_shebang("#!/usr/bin/env bash\necho hello"),
+            Some("/usr/bin/env bash")
+        );
         assert_eq!(parse_shebang("echo hello"), None);
     }
 
@@ -586,8 +602,9 @@ mod tests {
     fn test_execute_subshell_basic() {
         let mut state = make_state();
 
-        // Execute subshell with a simple callback that returns success
-        let result = execute_subshell(&mut state, &[], None, |_state, _stmt| {
+        // Execute subshell with an empty body
+        let body: Vec<&bast::CompoundListItem> = vec![];
+        let result = execute_subshell(&mut state, &body, None, |_state, _item| {
             Ok(ExecResult {
                 stdout: "hello".to_string(),
                 stderr: String::new(),
@@ -605,8 +622,9 @@ mod tests {
     fn test_execute_group_basic() {
         let mut state = make_state();
 
-        // Execute group with a simple callback that returns success
-        let result = execute_group(&mut state, &[], None, |_state, _stmt| {
+        // Execute group with an empty body
+        let body: Vec<&bast::CompoundListItem> = vec![];
+        let result = execute_group(&mut state, &body, None, |_state, _item| {
             Ok(ExecResult {
                 stdout: "hello".to_string(),
                 stderr: String::new(),

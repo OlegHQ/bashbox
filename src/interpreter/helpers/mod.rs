@@ -1,9 +1,11 @@
 //! Interpreter helper modules
 
 pub mod array;
+pub mod builtin_args;
 pub mod condition;
 pub mod error_utils;
 pub mod file_tests;
+pub mod identifier;
 pub mod ifs;
 pub mod loop_helpers;
 pub mod nameref;
@@ -24,9 +26,11 @@ pub mod word_parts;
 pub mod xtrace;
 
 pub use array::*;
+pub use builtin_args::*;
 pub use condition::*;
 pub use error_utils::*;
 pub use file_tests::*;
+pub use identifier::*;
 pub use ifs::*;
 pub use loop_helpers::*;
 pub use nameref::*;

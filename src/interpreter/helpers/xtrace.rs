@@ -4,8 +4,8 @@
 //! PS4 variable controls the prefix (default "+ ").
 //! PS4 is expanded (variable substitution) before each trace line.
 
-use std::collections::HashMap;
 use crate::interpreter::types::ShellOptions;
+use std::collections::HashMap;
 
 /// Default PS4 value when not set
 pub const DEFAULT_PS4: &str = "+ ";
@@ -32,10 +32,7 @@ pub fn get_xtrace_prefix(env: &HashMap<String, String>) -> String {
 ///
 /// # Returns
 /// The expanded PS4 prefix, or the literal PS4 if expansion fails.
-pub fn get_xtrace_prefix_expanded<F>(
-    env: &HashMap<String, String>,
-    expander: F,
-) -> String
+pub fn get_xtrace_prefix_expanded<F>(env: &HashMap<String, String>, expander: F) -> String
 where
     F: FnOnce(&str) -> Result<String, String>,
 {
@@ -95,9 +92,32 @@ pub fn quote_for_trace(value: &str) -> String {
     // Check if quoting is needed
     // Need to quote if contains: whitespace, quotes, special chars, newlines
     let needs_quoting = value.chars().any(|c| {
-        matches!(c, ' ' | '\t' | '\n' | '\'' | '"' | '\\' | '$' | '`' | '!' |
-                    '*' | '?' | '[' | ']' | '{' | '}' | '|' | '&' | ';' |
-                    '<' | '>' | '(' | ')' | '~' | '#')
+        matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '\''
+                | '"'
+                | '\\'
+                | '$'
+                | '`'
+                | '!'
+                | '*'
+                | '?'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '|'
+                | '&'
+                | ';'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '~'
+                | '#'
+        )
     });
 
     if !needs_quoting {
@@ -142,19 +162,21 @@ pub fn quote_for_trace(value: &str) -> String {
 
     // Use double quotes for values with single quotes
     // Need to escape $ ` \ " in double quotes
-    let escaped: String = value.chars().map(|c| {
-        match c {
+    let escaped: String = value
+        .chars()
+        .map(|c| match c {
             '\\' | '$' | '`' | '"' => format!("\\{}", c),
             _ => c.to_string(),
-        }
-    }).collect();
+        })
+        .collect();
     format!("\"{}\"", escaped)
 }
 
 /// Format a trace line for output.
 /// Quotes arguments that need quoting for shell safety.
 pub fn format_trace_line(parts: &[&str]) -> String {
-    parts.iter()
+    parts
+        .iter()
         .map(|part| quote_for_trace(part))
         .collect::<Vec<_>>()
         .join(" ")

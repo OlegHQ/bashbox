@@ -42,7 +42,8 @@ pub fn build_ifs_char_class_pattern(ifs: &str) -> String {
     let mut result = String::new();
     for c in ifs.chars() {
         match c {
-            '\\' | '^' | '$' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '-' => {
+            '\\' | '^' | '$' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|'
+            | '-' => {
                 result.push('\\');
                 result.push(c);
             }
@@ -112,9 +113,15 @@ pub fn split_by_ifs_for_read(
     // Empty IFS means no splitting
     if ifs.is_empty() {
         if value.is_empty() {
-            return IfsReadSplitResult { words: vec![], word_starts: vec![] };
+            return IfsReadSplitResult {
+                words: vec![],
+                word_starts: vec![],
+            };
         }
-        return IfsReadSplitResult { words: vec![value.to_string()], word_starts: vec![0] };
+        return IfsReadSplitResult {
+            words: vec![value.to_string()],
+            word_starts: vec![0],
+        };
     }
 
     let (whitespace, non_whitespace) = categorize_ifs(ifs);
@@ -130,7 +137,10 @@ pub fn split_by_ifs_for_read(
 
     // If we've consumed all input, return empty result
     if pos >= chars.len() {
-        return IfsReadSplitResult { words: vec![], word_starts: vec![] };
+        return IfsReadSplitResult {
+            words: vec![],
+            word_starts: vec![],
+        };
     }
 
     // Check for leading non-whitespace delimiter (creates empty field)
@@ -237,7 +247,11 @@ pub fn split_by_ifs_for_expansion_ex(value: &str, ifs: &str) -> IfsExpansionSpli
     // Empty IFS means no splitting
     if ifs.is_empty() {
         return IfsExpansionSplitResult {
-            words: if value.is_empty() { vec![] } else { vec![value.to_string()] },
+            words: if value.is_empty() {
+                vec![]
+            } else {
+                vec![value.to_string()]
+            },
             had_leading_delimiter: false,
             had_trailing_delimiter: false,
         };
@@ -336,7 +350,11 @@ pub fn split_by_ifs_for_expansion_ex(value: &str, ifs: &str) -> IfsExpansionSpli
         }
     }
 
-    IfsExpansionSplitResult { words, had_leading_delimiter, had_trailing_delimiter }
+    IfsExpansionSplitResult {
+        words,
+        had_leading_delimiter,
+        had_trailing_delimiter,
+    }
 }
 
 /// IFS splitting for word expansion (unquoted $VAR, $*, etc.).
@@ -531,7 +549,10 @@ mod tests {
 
     #[test]
     fn test_strip_trailing_ifs_whitespace() {
-        assert_eq!(strip_trailing_ifs_whitespace("hello  ", " ", false), "hello");
+        assert_eq!(
+            strip_trailing_ifs_whitespace("hello  ", " ", false),
+            "hello"
+        );
         assert_eq!(strip_trailing_ifs_whitespace("hello", " ", false), "hello");
         assert_eq!(strip_trailing_ifs_whitespace("ax", "x ", false), "a");
         assert_eq!(strip_trailing_ifs_whitespace("axx", "x ", false), "axx");

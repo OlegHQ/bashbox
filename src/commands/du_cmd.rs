@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::vfs_walk::{child_path, read_dir_sorted};
 use crate::commands::{Command, CommandContext, CommandResult};
+use crate::fs::relative_child;
+use async_trait::async_trait;
 
 pub struct DuCommand;
 
@@ -59,10 +61,22 @@ impl Command for DuCommand {
             let arg = &ctx.args[i];
             match arg.as_str() {
                 "--help" => return CommandResult::success(format!("{}\n", HELP)),
-                "-a" => { options.all_files = true; i += 1; }
-                "-h" => { options.human_readable = true; i += 1; }
-                "-s" => { options.summarize = true; i += 1; }
-                "-c" => { options.grand_total = true; i += 1; }
+                "-a" => {
+                    options.all_files = true;
+                    i += 1;
+                }
+                "-h" => {
+                    options.human_readable = true;
+                    i += 1;
+                }
+                "-s" => {
+                    options.summarize = true;
+                    i += 1;
+                }
+                "-c" => {
+                    options.grand_total = true;
+                    i += 1;
+                }
                 s if s.starts_with("--max-depth=") => {
                     options.max_depth = s[12..].parse().ok();
                     i += 1;
@@ -122,42 +136,50 @@ async fn calculate_size(
     options: &DuOptions,
     depth: usize,
 ) -> Result<(String, u64), String> {
-    let stat = ctx.fs.stat(full_path).await
-        .map_err(|_| format!("du: cannot access '{}': No such file or directory\n", display_path))?;
+    let stat = ctx.fs.stat(full_path).await.map_err(|_| {
+        format!(
+            "du: cannot access '{}': No such file or directory\n",
+            display_path
+        )
+    })?;
 
     if !stat.is_directory {
         let out = if options.all_files || depth == 0 {
-            format!("{}\t{}\n", format_size(stat.size, options.human_readable), display_path)
+            format!(
+                "{}\t{}\n",
+                format_size(stat.size, options.human_readable),
+                display_path
+            )
         } else {
             String::new()
         };
         return Ok((out, stat.size));
     }
 
-    let entries = ctx.fs.readdir(full_path).await.unwrap_or_default();
+    let sorted_entries = read_dir_sorted(ctx.fs.as_ref(), full_path)
+        .await
+        .unwrap_or_default();
     let mut dir_size = 0u64;
     let mut output = String::new();
 
-    let mut sorted_entries = entries;
-    sorted_entries.sort();
-
     for entry in &sorted_entries {
-        let entry_path = if full_path == "/" {
-            format!("/{}", entry)
-        } else {
-            format!("{}/{}", full_path, entry)
-        };
+        let entry_path = child_path(full_path, entry);
         let entry_display = if display_path == "." {
             entry.clone()
         } else {
-            format!("{}/{}", display_path, entry)
+            relative_child(display_path, entry)
         };
 
         if let Ok(entry_stat) = ctx.fs.stat(&entry_path).await {
             if entry_stat.is_directory {
                 let (sub_out, sub_size) = Box::pin(calculate_size(
-                    ctx, &entry_path, &entry_display, options, depth + 1
-                )).await?;
+                    ctx,
+                    &entry_path,
+                    &entry_display,
+                    options,
+                    depth + 1,
+                ))
+                .await?;
                 dir_size += sub_size;
                 if !options.summarize {
                     if options.max_depth.is_none() || depth + 1 <= options.max_depth.unwrap() {
@@ -191,9 +213,9 @@ async fn calculate_size(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::{InMemoryFs, FileSystem};
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -207,7 +229,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = DuCommand.execute(ctx).await;
@@ -215,7 +237,7 @@ mod tests {
         assert!(result.stdout.contains("-h"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_file_size() {
         let mut ctx = create_ctx(vec!["/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -225,7 +247,7 @@ mod tests {
         assert!(result.stdout.contains("test.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_not_found() {
         let ctx = create_ctx(vec!["/nonexistent"]);
         let result = DuCommand.execute(ctx).await;

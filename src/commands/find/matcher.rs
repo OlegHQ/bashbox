@@ -1,27 +1,47 @@
 use std::time::SystemTime;
 
 use super::types::*;
+use crate::shell::pattern_utils;
 
 /// Evaluate a find expression against an EvalContext, returning an EvalResult.
 pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
     match expr {
-        Expression::Name { pattern, case_insensitive } => {
+        Expression::Name {
+            pattern,
+            case_insensitive,
+        } => {
             let matches = if *case_insensitive {
                 glob_match(&pattern.to_lowercase(), &ctx.name.to_lowercase())
             } else {
                 glob_match(pattern, &ctx.name)
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
-        Expression::Path { pattern, case_insensitive } => {
+        Expression::Path {
+            pattern,
+            case_insensitive,
+        } => {
             let matches = if *case_insensitive {
                 glob_match(&pattern.to_lowercase(), &ctx.relative_path.to_lowercase())
             } else {
                 glob_match(pattern, &ctx.relative_path)
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
-        Expression::Regex { pattern, case_insensitive } => {
+        Expression::Regex {
+            pattern,
+            case_insensitive,
+        } => {
             let matches = if *case_insensitive {
                 regex_lite::Regex::new(&format!("(?i){}", pattern))
                     .map(|re| re.is_match(&ctx.relative_path))
@@ -31,7 +51,12 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
                     .map(|re| re.is_match(&ctx.relative_path))
                     .unwrap_or(false)
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
         Expression::Type(file_type) => {
             let matches = match file_type {
@@ -39,11 +64,19 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
                 FileType::Directory => ctx.is_directory,
                 FileType::Symlink => ctx.is_symlink,
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
-        Expression::Empty => {
-            EvalResult { matches: ctx.is_empty, pruned: false, printed: false, output: String::new() }
-        }
+        Expression::Empty => EvalResult {
+            matches: ctx.is_empty,
+            pruned: false,
+            printed: false,
+            output: String::new(),
+        },
         Expression::Mtime { days, comparison } => {
             let now = SystemTime::now();
             let duration = now.duration_since(ctx.mtime).unwrap_or_default();
@@ -53,16 +86,30 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
                 Comparison::LessThan => days_ago < *days,
                 Comparison::Exact => days_ago == *days,
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
         Expression::Newer { reference_path: _ } => {
             let matches = match ctx.newer_ref_mtime {
                 Some(ref_mtime) => ctx.mtime > ref_mtime,
                 None => false,
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
-        Expression::Size { value, unit, comparison } => {
+        Expression::Size {
+            value,
+            unit,
+            comparison,
+        } => {
             let multiplier: i64 = match unit {
                 SizeUnit::Bytes => 1,
                 SizeUnit::Kilobytes => 1024,
@@ -83,7 +130,12 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
                     }
                 }
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
         Expression::Perm { mode, match_type } => {
             let file_mode = ctx.mode & 0o777;
@@ -93,31 +145,60 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
                 PermMatch::AllBits => (file_mode & target_mode) == target_mode,
                 PermMatch::AnyBits => (file_mode & target_mode) != 0,
             };
-            EvalResult { matches, pruned: false, printed: false, output: String::new() }
+            EvalResult {
+                matches,
+                pruned: false,
+                printed: false,
+                output: String::new(),
+            }
         }
-        Expression::Prune => {
-            EvalResult { matches: true, pruned: true, printed: false, output: String::new() }
-        }
+        Expression::Prune => EvalResult {
+            matches: true,
+            pruned: true,
+            printed: false,
+            output: String::new(),
+        },
         Expression::Print => {
             let mut output = ctx.relative_path.clone();
             output.push('\n');
-            EvalResult { matches: true, pruned: false, printed: true, output }
+            EvalResult {
+                matches: true,
+                pruned: false,
+                printed: true,
+                output,
+            }
         }
         Expression::Print0 => {
             let mut output = ctx.relative_path.clone();
             output.push('\0');
-            EvalResult { matches: true, pruned: false, printed: true, output }
+            EvalResult {
+                matches: true,
+                pruned: false,
+                printed: true,
+                output,
+            }
         }
         Expression::Printf { format } => {
             let output = format_printf(format, ctx);
-            EvalResult { matches: true, pruned: false, printed: true, output }
+            EvalResult {
+                matches: true,
+                pruned: false,
+                printed: true,
+                output,
+            }
         }
-        Expression::Delete => {
-            EvalResult { matches: true, pruned: false, printed: true, output: String::new() }
-        }
-        Expression::Exec { .. } => {
-            EvalResult { matches: true, pruned: false, printed: true, output: String::new() }
-        }
+        Expression::Delete => EvalResult {
+            matches: true,
+            pruned: false,
+            printed: true,
+            output: String::new(),
+        },
+        Expression::Exec { .. } => EvalResult {
+            matches: true,
+            pruned: false,
+            printed: true,
+            output: String::new(),
+        },
         Expression::Not(inner) => {
             let inner_result = evaluate(inner, ctx);
             EvalResult {
@@ -160,102 +241,10 @@ pub fn evaluate(expr: &Expression, ctx: &EvalContext) -> EvalResult {
         }
     }
 }
-/// Glob-style pattern matching supporting *, ?, [...], [!...].
+/// Glob-style pattern matching supporting *, ?, `[…]`.
+/// See [`pattern_utils::matches_shell_glob`].
 pub fn glob_match(pattern: &str, text: &str) -> bool {
-    let pat: Vec<char> = pattern.chars().collect();
-    let txt: Vec<char> = text.chars().collect();
-    glob_match_inner(&pat, &txt, 0, 0)
-}
-
-fn glob_match_inner(pat: &[char], txt: &[char], mut pi: usize, mut ti: usize) -> bool {
-    let mut star_pi: Option<usize> = None;
-    let mut star_ti: usize = 0;
-
-    while ti < txt.len() {
-        if pi < pat.len() && pat[pi] == '*' {
-            star_pi = Some(pi);
-            star_ti = ti;
-            pi += 1;
-        } else if pi < pat.len() && pat[pi] == '?' {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == '[' {
-            if let Some((matched, end)) = match_char_class(pat, pi, txt[ti]) {
-                if matched {
-                    pi = end;
-                    ti += 1;
-                } else if let Some(sp) = star_pi {
-                    pi = sp + 1;
-                    star_ti += 1;
-                    ti = star_ti;
-                } else {
-                    return false;
-                }
-            } else if let Some(sp) = star_pi {
-                pi = sp + 1;
-                star_ti += 1;
-                ti = star_ti;
-            } else {
-                return false;
-            }
-        } else if pi < pat.len() && pat[pi] == txt[ti] {
-            pi += 1;
-            ti += 1;
-        } else if let Some(sp) = star_pi {
-            pi = sp + 1;
-            star_ti += 1;
-            ti = star_ti;
-        } else {
-            return false;
-        }
-    }
-
-    while pi < pat.len() && pat[pi] == '*' {
-        pi += 1;
-    }
-
-    pi == pat.len()
-}
-/// Match a character class like [abc], [a-z], [!abc].
-/// Returns Some((matched, end_index)) where end_index is past the ']'.
-fn match_char_class(pat: &[char], start: usize, ch: char) -> Option<(bool, usize)> {
-    let mut i = start + 1; // skip '['
-    if i >= pat.len() {
-        return None;
-    }
-
-    let negated = pat[i] == '!' || pat[i] == '^';
-    if negated {
-        i += 1;
-    }
-
-    let mut matched = false;
-    let mut first = true;
-
-    while i < pat.len() && (pat[i] != ']' || first) {
-        first = false;
-        if i + 2 < pat.len() && pat[i + 1] == '-' && pat[i + 2] != ']' {
-            // Range: a-z
-            let lo = pat[i];
-            let hi = pat[i + 2];
-            if ch >= lo && ch <= hi {
-                matched = true;
-            }
-            i += 3;
-        } else {
-            if pat[i] == ch {
-                matched = true;
-            }
-            i += 1;
-        }
-    }
-
-    if i < pat.len() && pat[i] == ']' {
-        let result = if negated { !matched } else { matched };
-        Some((result, i + 1))
-    } else {
-        None // unclosed bracket
-    }
+    pattern_utils::matches_shell_glob(pattern, text)
 }
 /// Format a printf-style format string using find context.
 fn format_printf(format: &str, ctx: &EvalContext) -> String {
@@ -360,11 +349,26 @@ fn process_escapes(s: &str) -> String {
     while i < chars.len() {
         if chars[i] == '\\' && i + 1 < chars.len() {
             match chars[i + 1] {
-                'n' => { result.push('\n'); i += 2; }
-                't' => { result.push('\t'); i += 2; }
-                '0' => { result.push('\0'); i += 2; }
-                '\\' => { result.push('\\'); i += 2; }
-                _ => { result.push(chars[i]); i += 1; }
+                'n' => {
+                    result.push('\n');
+                    i += 2;
+                }
+                't' => {
+                    result.push('\t');
+                    i += 2;
+                }
+                '0' => {
+                    result.push('\0');
+                    i += 2;
+                }
+                '\\' => {
+                    result.push('\\');
+                    i += 2;
+                }
+                _ => {
+                    result.push(chars[i]);
+                    i += 1;
+                }
             }
         } else {
             result.push(chars[i]);
@@ -393,27 +397,38 @@ fn format_symbolic_mode(mode: u32, is_directory: bool) -> String {
 
 /// Format date in ctime format.
 fn format_ctime_date(mtime: SystemTime) -> String {
-    let duration = mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    let duration = mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = duration.as_secs() as i64;
     format_unix_timestamp_ctime(secs)
 }
 
 fn format_unix_timestamp_ctime(timestamp: i64) -> String {
     let days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
 
     // Simple date calculation from unix timestamp
     let (year, month, day, hour, min, sec, wday) = unix_to_date(timestamp);
 
-    format!("{} {} {:>2} {:02}:{:02}:{:02} {}",
+    format!(
+        "{} {} {:>2} {:02}:{:02}:{:02} {}",
         days[wday as usize % 7],
         months[month as usize],
-        day, hour, min, sec, year)
+        day,
+        hour,
+        min,
+        sec,
+        year
+    )
 }
 /// Format time with %T directive format character.
 fn format_time_directive(mtime: SystemTime, fmt: char) -> String {
-    let duration = mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    let duration = mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = duration.as_secs() as i64;
     let (year, month, day, hour, min, sec, _wday) = unix_to_date(secs);
 
@@ -460,7 +475,20 @@ fn unix_to_date(timestamp: i64) -> (i64, i64, i64, i64, i64, i64, i64) {
     }
 
     let leap = is_leap_year(year);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 0i64;
     for md in &month_days {
         if days < *md {
@@ -538,7 +566,10 @@ mod tests {
     #[test]
     fn test_name_glob_matching() {
         let ctx = make_ctx("file.txt", "./file.txt", true, false);
-        let expr = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let expr = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let result = evaluate(&expr, &ctx);
         assert!(result.matches);
     }
@@ -546,7 +577,10 @@ mod tests {
     #[test]
     fn test_name_case_insensitive() {
         let ctx = make_ctx("FILE.TXT", "./FILE.TXT", true, false);
-        let expr = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: true };
+        let expr = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: true,
+        };
         let result = evaluate(&expr, &ctx);
         assert!(result.matches);
     }
@@ -572,7 +606,11 @@ mod tests {
     fn test_size_greater_than() {
         let mut ctx = make_ctx("big.bin", "./big.bin", true, false);
         ctx.size = 2048;
-        let expr = Expression::Size { value: 1, unit: SizeUnit::Kilobytes, comparison: Comparison::GreaterThan };
+        let expr = Expression::Size {
+            value: 1,
+            unit: SizeUnit::Kilobytes,
+            comparison: Comparison::GreaterThan,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
 
@@ -580,7 +618,11 @@ mod tests {
     fn test_size_less_than() {
         let mut ctx = make_ctx("small.bin", "./small.bin", true, false);
         ctx.size = 500;
-        let expr = Expression::Size { value: 1, unit: SizeUnit::Megabytes, comparison: Comparison::LessThan };
+        let expr = Expression::Size {
+            value: 1,
+            unit: SizeUnit::Megabytes,
+            comparison: Comparison::LessThan,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
 
@@ -588,7 +630,11 @@ mod tests {
     fn test_size_exact() {
         let mut ctx = make_ctx("exact.bin", "./exact.bin", true, false);
         ctx.size = 1024;
-        let expr = Expression::Size { value: 1024, unit: SizeUnit::Bytes, comparison: Comparison::Exact };
+        let expr = Expression::Size {
+            value: 1024,
+            unit: SizeUnit::Bytes,
+            comparison: Comparison::Exact,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
 
@@ -599,7 +645,10 @@ mod tests {
         let mut ctx = make_ctx("old.txt", "./old.txt", true, false);
         // Set mtime to 10 days ago
         ctx.mtime = SystemTime::now() - Duration::from_secs(10 * 86400 + 100);
-        let expr = Expression::Mtime { days: 5, comparison: Comparison::GreaterThan };
+        let expr = Expression::Mtime {
+            days: 5,
+            comparison: Comparison::GreaterThan,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
     // --- Permission matching tests ---
@@ -608,7 +657,10 @@ mod tests {
     fn test_perm_exact() {
         let mut ctx = make_ctx("script.sh", "./script.sh", true, false);
         ctx.mode = 0o755;
-        let expr = Expression::Perm { mode: 0o755, match_type: PermMatch::Exact };
+        let expr = Expression::Perm {
+            mode: 0o755,
+            match_type: PermMatch::Exact,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
 
@@ -616,7 +668,10 @@ mod tests {
     fn test_perm_all_bits() {
         let mut ctx = make_ctx("script.sh", "./script.sh", true, false);
         ctx.mode = 0o755;
-        let expr = Expression::Perm { mode: 0o111, match_type: PermMatch::AllBits };
+        let expr = Expression::Perm {
+            mode: 0o111,
+            match_type: PermMatch::AllBits,
+        };
         assert!(evaluate(&expr, &ctx).matches);
     }
 
@@ -624,9 +679,15 @@ mod tests {
     fn test_perm_any_bits() {
         let mut ctx = make_ctx("script.sh", "./script.sh", true, false);
         ctx.mode = 0o644;
-        let expr = Expression::Perm { mode: 0o100, match_type: PermMatch::AnyBits };
+        let expr = Expression::Perm {
+            mode: 0o100,
+            match_type: PermMatch::AnyBits,
+        };
         assert!(!evaluate(&expr, &ctx).matches);
-        let expr2 = Expression::Perm { mode: 0o004, match_type: PermMatch::AnyBits };
+        let expr2 = Expression::Perm {
+            mode: 0o004,
+            match_type: PermMatch::AnyBits,
+        };
         assert!(evaluate(&expr2, &ctx).matches);
     }
 
@@ -635,7 +696,10 @@ mod tests {
     #[test]
     fn test_not_expression() {
         let ctx = make_ctx("file.rs", "./file.rs", true, false);
-        let inner = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let inner = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let expr = Expression::Not(Box::new(inner));
         assert!(evaluate(&expr, &ctx).matches);
     }
@@ -646,7 +710,10 @@ mod tests {
     fn test_and_short_circuit() {
         let ctx = make_ctx("file.txt", "./file.txt", true, false);
         let left = Expression::Type(FileType::Directory); // false
-        let right = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let right = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let expr = Expression::And(Box::new(left), Box::new(right));
         let result = evaluate(&expr, &ctx);
         assert!(!result.matches);
@@ -656,7 +723,10 @@ mod tests {
     fn test_and_both_true() {
         let ctx = make_ctx("file.txt", "./file.txt", true, false);
         let left = Expression::Type(FileType::File);
-        let right = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let right = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let expr = Expression::And(Box::new(left), Box::new(right));
         assert!(evaluate(&expr, &ctx).matches);
     }
@@ -665,7 +735,10 @@ mod tests {
     #[test]
     fn test_or_short_circuit() {
         let ctx = make_ctx("file.txt", "./file.txt", true, false);
-        let left = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let left = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let right = Expression::Type(FileType::Directory);
         let expr = Expression::Or(Box::new(left), Box::new(right));
         let result = evaluate(&expr, &ctx);
@@ -676,7 +749,10 @@ mod tests {
     fn test_or_fallthrough() {
         let ctx = make_ctx("file.txt", "./file.txt", true, false);
         let left = Expression::Type(FileType::Directory); // false
-        let right = Expression::Name { pattern: "*.txt".to_string(), case_insensitive: false };
+        let right = Expression::Name {
+            pattern: "*.txt".to_string(),
+            case_insensitive: false,
+        };
         let expr = Expression::Or(Box::new(left), Box::new(right));
         assert!(evaluate(&expr, &ctx).matches);
     }
@@ -726,23 +802,33 @@ mod tests {
         ctx.mode = 0o755;
         ctx.starting_point = ".".to_string();
 
-        let expr = Expression::Printf { format: "%f\\n".to_string() };
+        let expr = Expression::Printf {
+            format: "%f\\n".to_string(),
+        };
         let result = evaluate(&expr, &ctx);
         assert_eq!(result.output, "file.txt\n");
 
-        let expr2 = Expression::Printf { format: "%p %s\\n".to_string() };
+        let expr2 = Expression::Printf {
+            format: "%p %s\\n".to_string(),
+        };
         let result2 = evaluate(&expr2, &ctx);
         assert_eq!(result2.output, "./dir/file.txt 42\n");
 
-        let expr3 = Expression::Printf { format: "%m %d\\n".to_string() };
+        let expr3 = Expression::Printf {
+            format: "%m %d\\n".to_string(),
+        };
         let result3 = evaluate(&expr3, &ctx);
         assert_eq!(result3.output, "755 2\n");
 
-        let expr4 = Expression::Printf { format: "%h\\n".to_string() };
+        let expr4 = Expression::Printf {
+            format: "%h\\n".to_string(),
+        };
         let result4 = evaluate(&expr4, &ctx);
         assert_eq!(result4.output, "./dir\n");
 
-        let expr5 = Expression::Printf { format: "%%\\n".to_string() };
+        let expr5 = Expression::Printf {
+            format: "%%\\n".to_string(),
+        };
         let result5 = evaluate(&expr5, &ctx);
         assert_eq!(result5.output, "%\n");
     }

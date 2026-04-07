@@ -2,21 +2,47 @@ use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
 pub enum Expression {
-    Name { pattern: String, case_insensitive: bool },
-    Path { pattern: String, case_insensitive: bool },
-    Regex { pattern: String, case_insensitive: bool },
+    Name {
+        pattern: String,
+        case_insensitive: bool,
+    },
+    Path {
+        pattern: String,
+        case_insensitive: bool,
+    },
+    Regex {
+        pattern: String,
+        case_insensitive: bool,
+    },
     Type(FileType),
     Empty,
-    Mtime { days: i64, comparison: Comparison },
-    Newer { reference_path: String },
-    Size { value: i64, unit: SizeUnit, comparison: Comparison },
-    Perm { mode: u32, match_type: PermMatch },
+    Mtime {
+        days: i64,
+        comparison: Comparison,
+    },
+    Newer {
+        reference_path: String,
+    },
+    Size {
+        value: i64,
+        unit: SizeUnit,
+        comparison: Comparison,
+    },
+    Perm {
+        mode: u32,
+        match_type: PermMatch,
+    },
     Prune,
     Print,
     Print0,
-    Printf { format: String },
+    Printf {
+        format: String,
+    },
     Delete,
-    Exec { command: Vec<String>, batch: bool }, // batch = true for {} +, false for {} ;
+    Exec {
+        command: Vec<String>,
+        batch: bool,
+    }, // batch = true for {} +, false for {} ;
     Not(Box<Expression>),
     And(Box<Expression>, Box<Expression>),
     Or(Box<Expression>, Box<Expression>),
@@ -31,18 +57,18 @@ pub enum Comparison {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SizeUnit {
-    Bytes,      // c
-    Kilobytes,  // k
-    Megabytes,  // M
-    Gigabytes,  // G
-    Blocks,     // b (512-byte blocks, default)
+    Bytes,     // c
+    Kilobytes, // k
+    Megabytes, // M
+    Gigabytes, // G
+    Blocks,    // b (512-byte blocks, default)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PermMatch {
-    Exact,    // 755
-    AllBits,  // -755
-    AnyBits,  // /755
+    Exact,   // 755
+    AllBits, // -755
+    AnyBits, // /755
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,5 +106,5 @@ pub struct EvalResult {
 pub struct FindOptions {
     pub max_depth: Option<usize>,
     pub min_depth: Option<usize>,
-    pub depth_first: bool,  // -depth flag
+    pub depth_first: bool, // -depth flag
 }

@@ -1,12 +1,12 @@
 // src/network/fetch.rs
 
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::future::Future;
-use crate::commands::types::{FetchFn, FetchResponse};
 use super::allow_list::is_url_allowed;
 use super::types::{NetworkConfig, NetworkError};
+use crate::commands::types::{FetchFn, FetchResponse};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 const DEFAULT_MAX_REDIRECTS: usize = 20;
 const BODYLESS_METHODS: &[&str] = &["GET", "HEAD", "OPTIONS"];
@@ -80,21 +80,26 @@ pub async fn secure_fetch(
 /// Create a secure FetchFn that wraps a raw FetchFn with allow-list enforcement.
 /// The returned FetchFn has the same signature as the raw one but adds security checks.
 pub fn create_secure_fetch_fn(config: NetworkConfig, raw_fetch: FetchFn) -> FetchFn {
-    Arc::new(move |url: String, method: String, headers: HashMap<String, String>, body: Option<String>| {
-        let config = config.clone();
-        let raw_fetch = raw_fetch.clone();
-        Box::pin(async move {
-            let options = SecureFetchOptions {
-                method: Some(method),
-                headers: Some(headers),
-                body,
-                follow_redirects: Some(true),
-            };
-            secure_fetch(&config, &raw_fetch, &url, options)
-                .await
-                .map_err(|e| e.to_string())
-        }) as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
-    })
+    Arc::new(
+        move |url: String,
+              method: String,
+              headers: HashMap<String, String>,
+              body: Option<String>| {
+            let config = config.clone();
+            let raw_fetch = raw_fetch.clone();
+            Box::pin(async move {
+                let options = SecureFetchOptions {
+                    method: Some(method),
+                    headers: Some(headers),
+                    body,
+                    follow_redirects: Some(true),
+                };
+                secure_fetch(&config, &raw_fetch, &url, options)
+                    .await
+                    .map_err(|e| e.to_string())
+            }) as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
+        },
+    )
 }
 
 fn check_url_allowed(config: &NetworkConfig, url: &str) -> Result<(), NetworkError> {
@@ -102,7 +107,9 @@ fn check_url_allowed(config: &NetworkConfig, url: &str) -> Result<(), NetworkErr
         return Ok(());
     }
     if !is_url_allowed(url, &config.allowed_url_prefixes) {
-        return Err(NetworkError::AccessDenied { url: url.to_string() });
+        return Err(NetworkError::AccessDenied {
+            url: url.to_string(),
+        });
     }
     Ok(())
 }
@@ -111,9 +118,16 @@ fn check_method_allowed(config: &NetworkConfig, method: &str) -> Result<(), Netw
     if config.dangerously_allow_full_internet_access {
         return Ok(());
     }
-    let allowed = config.allowed_methods.as_ref().map(|methods| {
-        methods.iter().map(|m| m.as_str().to_string()).collect::<Vec<_>>()
-    }).unwrap_or_else(|| vec!["GET".to_string(), "HEAD".to_string()]);
+    let allowed = config
+        .allowed_methods
+        .as_ref()
+        .map(|methods| {
+            methods
+                .iter()
+                .map(|m| m.as_str().to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec!["GET".to_string(), "HEAD".to_string()]);
 
     let upper_method = method.to_uppercase();
     if !allowed.iter().any(|m| m == &upper_method) {
@@ -162,102 +176,135 @@ fn resolve_redirect_url(base_url: &str, location: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::HttpMethod;
+    use super::*;
     use std::sync::Arc;
 
     /// Create a mock FetchFn that returns a predefined response
     fn mock_fetch(status: u16, body: &str) -> FetchFn {
         let body = body.to_string();
-        Arc::new(move |url: String, _method: String, _headers: HashMap<String, String>, _body: Option<String>| {
-            let body = body.clone();
-            Box::pin(async move {
-                Ok(FetchResponse {
-                    status,
-                    headers: HashMap::new(),
-                    body,
-                    url,
+        Arc::new(
+            move |url: String,
+                  _method: String,
+                  _headers: HashMap<String, String>,
+                  _body: Option<String>| {
+                let body = body.clone();
+                Box::pin(async move {
+                    Ok(FetchResponse {
+                        status,
+                        headers: HashMap::new(),
+                        body,
+                        url,
+                    })
                 })
-            }) as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
-        })
+                    as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
+            },
+        )
     }
 
     /// Create a mock FetchFn that returns a redirect
     fn mock_redirect_fetch(redirect_to: &str, final_body: &str) -> FetchFn {
         let redirect_to = redirect_to.to_string();
         let final_body = final_body.to_string();
-        Arc::new(move |url: String, _method: String, _headers: HashMap<String, String>, _body: Option<String>| {
-            let redirect_to = redirect_to.clone();
-            let final_body = final_body.clone();
-            Box::pin(async move {
-                if !url.contains("redirected") {
-                    let mut headers = HashMap::new();
-                    headers.insert("location".to_string(), redirect_to);
-                    Ok(FetchResponse {
-                        status: 302,
-                        headers,
-                        body: String::new(),
-                        url,
-                    })
-                } else {
-                    Ok(FetchResponse {
-                        status: 200,
-                        headers: HashMap::new(),
-                        body: final_body,
-                        url,
-                    })
-                }
-            }) as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
-        })
+        Arc::new(
+            move |url: String,
+                  _method: String,
+                  _headers: HashMap<String, String>,
+                  _body: Option<String>| {
+                let redirect_to = redirect_to.clone();
+                let final_body = final_body.clone();
+                Box::pin(async move {
+                    if !url.contains("redirected") {
+                        let mut headers = HashMap::new();
+                        headers.insert("location".to_string(), redirect_to);
+                        Ok(FetchResponse {
+                            status: 302,
+                            headers,
+                            body: String::new(),
+                            url,
+                        })
+                    } else {
+                        Ok(FetchResponse {
+                            status: 200,
+                            headers: HashMap::new(),
+                            body: final_body,
+                            url,
+                        })
+                    }
+                })
+                    as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
+            },
+        )
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_allowed_url() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_fetch(200, "ok");
-        let result = secure_fetch(&config, &fetch, "https://api.example.com/data", SecureFetchOptions::default()).await;
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://api.example.com/data",
+            SecureFetchOptions::default(),
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().body, "ok");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_denied_url() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_fetch(200, "ok");
-        let result = secure_fetch(&config, &fetch, "https://evil.com/hack", SecureFetchOptions::default()).await;
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://evil.com/hack",
+            SecureFetchOptions::default(),
+        )
+        .await;
         assert!(matches!(result, Err(NetworkError::AccessDenied { .. })));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_full_access() {
         let config = NetworkConfig {
             dangerously_allow_full_internet_access: true,
             ..Default::default()
         };
         let fetch = mock_fetch(200, "ok");
-        let result = secure_fetch(&config, &fetch, "https://anything.com/whatever", SecureFetchOptions::default()).await;
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://anything.com/whatever",
+            SecureFetchOptions::default(),
+        )
+        .await;
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_method_not_allowed() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_fetch(200, "ok");
-        let options = SecureFetchOptions { method: Some("POST".to_string()), ..Default::default() };
+        let options = SecureFetchOptions {
+            method: Some("POST".to_string()),
+            ..Default::default()
+        };
         let result = secure_fetch(&config, &fetch, "https://api.example.com/data", options).await;
         assert!(matches!(result, Err(NetworkError::MethodNotAllowed { .. })));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_method_allowed() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
@@ -265,35 +312,53 @@ mod tests {
             ..Default::default()
         };
         let fetch = mock_fetch(200, "ok");
-        let options = SecureFetchOptions { method: Some("POST".to_string()), ..Default::default() };
+        let options = SecureFetchOptions {
+            method: Some("POST".to_string()),
+            ..Default::default()
+        };
         let result = secure_fetch(&config, &fetch, "https://api.example.com/data", options).await;
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_redirect_allowed() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_redirect_fetch("https://api.example.com/redirected", "final");
-        let result = secure_fetch(&config, &fetch, "https://api.example.com/start", SecureFetchOptions::default()).await;
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://api.example.com/start",
+            SecureFetchOptions::default(),
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().body, "final");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_redirect_denied() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_redirect_fetch("https://evil.com/hack", "bad");
-        let result = secure_fetch(&config, &fetch, "https://api.example.com/start", SecureFetchOptions::default()).await;
-        assert!(matches!(result, Err(NetworkError::RedirectNotAllowed { .. })));
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://api.example.com/start",
+            SecureFetchOptions::default(),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(NetworkError::RedirectNotAllowed { .. })
+        ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_too_many_redirects() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
@@ -301,25 +366,45 @@ mod tests {
             ..Default::default()
         };
         // Create a fetch that always redirects
-        let fetch: FetchFn = Arc::new(|url: String, _: String, _: HashMap<String, String>, _: Option<String>| {
-            Box::pin(async move {
-                let mut headers = HashMap::new();
-                headers.insert("location".to_string(), format!("{}/next", url));
-                Ok(FetchResponse { status: 302, headers, body: String::new(), url })
-            }) as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
-        });
-        let result = secure_fetch(&config, &fetch, "https://api.example.com/start", SecureFetchOptions::default()).await;
-        assert!(matches!(result, Err(NetworkError::TooManyRedirects { max: 2 })));
+        let fetch: FetchFn = Arc::new(
+            |url: String, _: String, _: HashMap<String, String>, _: Option<String>| {
+                Box::pin(async move {
+                    let mut headers = HashMap::new();
+                    headers.insert("location".to_string(), format!("{}/next", url));
+                    Ok(FetchResponse {
+                        status: 302,
+                        headers,
+                        body: String::new(),
+                        url,
+                    })
+                })
+                    as Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
+            },
+        );
+        let result = secure_fetch(
+            &config,
+            &fetch,
+            "https://api.example.com/start",
+            SecureFetchOptions::default(),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(NetworkError::TooManyRedirects { max: 2 })
+        ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_secure_fetch_no_follow_redirects() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
             ..Default::default()
         };
         let fetch = mock_redirect_fetch("https://api.example.com/redirected", "final");
-        let options = SecureFetchOptions { follow_redirects: Some(false), ..Default::default() };
+        let options = SecureFetchOptions {
+            follow_redirects: Some(false),
+            ..Default::default()
+        };
         let result = secure_fetch(&config, &fetch, "https://api.example.com/start", options).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().status, 302); // Returns redirect response directly
@@ -350,7 +435,7 @@ mod tests {
     }
 
     // test create_secure_fetch_fn
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_secure_fetch_fn() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
@@ -358,12 +443,18 @@ mod tests {
         };
         let raw = mock_fetch(200, "wrapped");
         let secure = create_secure_fetch_fn(config, raw);
-        let result = secure("https://api.example.com/data".to_string(), "GET".to_string(), HashMap::new(), None).await;
+        let result = secure(
+            "https://api.example.com/data".to_string(),
+            "GET".to_string(),
+            HashMap::new(),
+            None,
+        )
+        .await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().body, "wrapped");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_secure_fetch_fn_denied() {
         let config = NetworkConfig {
             allowed_url_prefixes: vec!["https://api.example.com".to_string()],
@@ -371,7 +462,13 @@ mod tests {
         };
         let raw = mock_fetch(200, "wrapped");
         let secure = create_secure_fetch_fn(config, raw);
-        let result = secure("https://evil.com/hack".to_string(), "GET".to_string(), HashMap::new(), None).await;
+        let result = secure(
+            "https://evil.com/hack".to_string(),
+            "GET".to_string(),
+            HashMap::new(),
+            None,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not in allow-list"));
     }

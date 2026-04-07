@@ -4,8 +4,8 @@
 //! and accumulating their output.
 
 use crate::interpreter::errors::{
-    BreakError, ContinueError, ErrexitError, ExecutionLimitError,
-    ExitError, ReturnError, SubshellExitError,
+    BreakError, ContinueError, ErrexitError, ExecutionLimitError, ExitError, ReturnError,
+    SubshellExitError,
 };
 use crate::interpreter::types::ExecResult;
 
@@ -80,7 +80,11 @@ pub struct StatementsResult {
 impl StatementsResult {
     /// Create a new statements result.
     pub fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
     }
 
     /// Create from an ExecResult.
@@ -120,7 +124,11 @@ pub enum StatementError {
     Exit(ExitError),
     ExecutionLimit(ExecutionLimitError),
     SubshellExit(SubshellExitError),
-    Other { message: String, stdout: String, stderr: String },
+    Other {
+        message: String,
+        stdout: String,
+        stderr: String,
+    },
 }
 
 impl StatementError {
@@ -134,7 +142,11 @@ impl StatementError {
             StatementError::Exit(e) => e.prepend_output(stdout, stderr),
             StatementError::ExecutionLimit(e) => e.prepend_output(stdout, stderr),
             StatementError::SubshellExit(e) => e.prepend_output(stdout, stderr),
-            StatementError::Other { stdout: s, stderr: e, .. } => {
+            StatementError::Other {
+                stdout: s,
+                stderr: e,
+                ..
+            } => {
                 *s = format!("{}{}", stdout, s);
                 *e = format!("{}{}", stderr, e);
             }
@@ -176,11 +188,8 @@ where
     F: FnMut(S) -> Result<ExecResult, E>,
     E: Into<StatementError>,
 {
-    let mut result = StatementsResult::new(
-        initial_stdout.to_string(),
-        initial_stderr.to_string(),
-        0,
-    );
+    let mut result =
+        StatementsResult::new(initial_stdout.to_string(), initial_stderr.to_string(), 0);
 
     for stmt in statements {
         match executor(stmt) {
@@ -212,11 +221,8 @@ pub fn execute_statements_with_catch<S, F, E>(
 where
     F: FnMut(S) -> Result<ExecResult, E>,
 {
-    let mut result = StatementsResult::new(
-        initial_stdout.to_string(),
-        initial_stderr.to_string(),
-        0,
-    );
+    let mut result =
+        StatementsResult::new(initial_stdout.to_string(), initial_stderr.to_string(), 0);
 
     for stmt in statements {
         match executor(stmt) {

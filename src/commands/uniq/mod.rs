@@ -1,6 +1,8 @@
 // src/commands/uniq/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct UniqCommand;
 
@@ -11,7 +13,7 @@ impl Command for UniqCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: uniq [OPTION]... [INPUT [OUTPUT]]\n\n\
                  Filter adjacent matching lines from INPUT (or stdin).\n\n\
@@ -49,10 +51,7 @@ impl Command for UniqCommand {
             match ctx.fs.read_file(&path).await {
                 Ok(c) => c,
                 Err(_) => {
-                    return CommandResult::error(format!(
-                        "uniq: {}: No such file or directory\n",
-                        files[0]
-                    ));
+                    return CommandResult::error(no_such_file("uniq", &files[0]));
                 }
             }
         };
@@ -110,32 +109,14 @@ impl Command for UniqCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::commands::test_utils::*;
     use crate::fs::types::FileSystem;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &str)>) -> CommandContext {
+        make_ctx_with_stdin_and_files(args, stdin, files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_remove_adjacent_duplicates() {
         let ctx = make_ctx(
             vec!["/test.txt"],
@@ -148,7 +129,7 @@ mod tests {
         assert_eq!(result.stdout, "aaa\nbbb\nccc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_count_with_c() {
         let ctx = make_ctx(
             vec!["-c", "/test.txt"],
@@ -163,7 +144,7 @@ mod tests {
         assert!(result.stdout.contains("2 ccc"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_duplicates_only_with_d() {
         let ctx = make_ctx(
             vec!["-d", "/test.txt"],
@@ -176,7 +157,7 @@ mod tests {
         assert_eq!(result.stdout, "aaa\nccc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unique_only_with_u() {
         let ctx = make_ctx(
             vec!["-u", "/test.txt"],
@@ -189,7 +170,7 @@ mod tests {
         assert_eq!(result.stdout, "bbb\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_only_adjacent_duplicates() {
         let ctx = make_ctx(
             vec!["/test.txt"],
@@ -202,7 +183,7 @@ mod tests {
         assert_eq!(result.stdout, "aaa\nbbb\naaa\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stdin() {
         let ctx = make_ctx(vec![], "hello\nhello\nworld\n", vec![]).await;
         let result = UniqCommand.execute(ctx).await;
@@ -210,7 +191,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\nworld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_case_insensitive_with_i() {
         let ctx = make_ctx(
             vec!["-i", "/test.txt"],
@@ -223,33 +204,23 @@ mod tests {
         assert_eq!(result.stdout, "Hello\nWorld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_no_duplicates() {
-        let ctx = make_ctx(
-            vec!["/test.txt"],
-            "",
-            vec![("/test.txt", "a\nb\nc\n")],
-        )
-        .await;
+        let ctx = make_ctx(vec!["/test.txt"], "", vec![("/test.txt", "a\nb\nc\n")]).await;
         let result = UniqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\nc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_all_same() {
-        let ctx = make_ctx(
-            vec!["/test.txt"],
-            "",
-            vec![("/test.txt", "x\nx\nx\n")],
-        )
-        .await;
+        let ctx = make_ctx(vec!["/test.txt"], "", vec![("/test.txt", "x\nx\nx\n")]).await;
         let result = UniqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "x\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_input() {
         let ctx = make_ctx(vec![], "", vec![]).await;
         let result = UniqCommand.execute(ctx).await;
@@ -257,27 +228,33 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nonexistent_file() {
         let ctx = make_ctx(vec!["/nonexistent.txt"], "", vec![]).await;
         let result = UniqCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_count_format() {
         let ctx = make_ctx(
             vec!["-c", "/test.txt"],
             "",
-            vec![("/test.txt", "apple\napple\nbanana\nbanana\nbanana\ncherry\n")],
+            vec![(
+                "/test.txt",
+                "apple\napple\nbanana\nbanana\nbanana\ncherry\n",
+            )],
         )
         .await;
         let result = UniqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "      2 apple\n      3 banana\n      1 cherry\n");
+        assert_eq!(
+            result.stdout,
+            "      2 apple\n      3 banana\n      1 cherry\n"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = make_ctx(vec!["--help"], "", vec![]).await;
         let result = UniqCommand.execute(ctx).await;

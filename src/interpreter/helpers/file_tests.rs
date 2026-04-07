@@ -166,7 +166,9 @@ pub const CHAR_DEVICES: &[&str] = &[
 
 /// Check if a path is a known character device.
 pub fn is_char_device(path: &str) -> bool {
-    CHAR_DEVICES.iter().any(|dev| path == *dev || path.ends_with(dev))
+    CHAR_DEVICES
+        .iter()
+        .any(|dev| path == *dev || path.ends_with(dev))
 }
 
 /// File stat information needed for file tests.
@@ -209,17 +211,11 @@ pub fn evaluate_file_test<F: FileSystem>(
     let path = Path::new(&path_str);
 
     match operator {
-        FileTestOperator::Exists | FileTestOperator::ExistsDeprecated => {
-            fs.exists(path)
-        }
+        FileTestOperator::Exists | FileTestOperator::ExistsDeprecated => fs.exists(path),
 
-        FileTestOperator::RegularFile => {
-            fs.stat(path).map_or(false, |s| s.is_file)
-        }
+        FileTestOperator::RegularFile => fs.stat(path).map_or(false, |s| s.is_file),
 
-        FileTestOperator::Directory => {
-            fs.stat(path).map_or(false, |s| s.is_directory)
-        }
+        FileTestOperator::Directory => fs.stat(path).map_or(false, |s| s.is_directory),
 
         FileTestOperator::Readable => {
             // Check user read bit (0o400)
@@ -355,8 +351,7 @@ pub fn evaluate_file_test_str<F: FileSystem>(
     operator: &str,
     operand: &str,
 ) -> Option<bool> {
-    FileTestOperator::from_str(operator)
-        .map(|op| evaluate_file_test(fs, cwd, op, operand))
+    FileTestOperator::from_str(operator).map(|op| evaluate_file_test(fs, cwd, op, operand))
 }
 
 /// Evaluate a binary file test operator from string.
@@ -377,14 +372,38 @@ mod tests {
 
     #[test]
     fn test_file_test_operator_from_str() {
-        assert_eq!(FileTestOperator::from_str("-e"), Some(FileTestOperator::Exists));
-        assert_eq!(FileTestOperator::from_str("-f"), Some(FileTestOperator::RegularFile));
-        assert_eq!(FileTestOperator::from_str("-d"), Some(FileTestOperator::Directory));
-        assert_eq!(FileTestOperator::from_str("-r"), Some(FileTestOperator::Readable));
-        assert_eq!(FileTestOperator::from_str("-w"), Some(FileTestOperator::Writable));
-        assert_eq!(FileTestOperator::from_str("-x"), Some(FileTestOperator::Executable));
-        assert_eq!(FileTestOperator::from_str("-L"), Some(FileTestOperator::SymbolicLink));
-        assert_eq!(FileTestOperator::from_str("-h"), Some(FileTestOperator::SymbolicLinkH));
+        assert_eq!(
+            FileTestOperator::from_str("-e"),
+            Some(FileTestOperator::Exists)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-f"),
+            Some(FileTestOperator::RegularFile)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-d"),
+            Some(FileTestOperator::Directory)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-r"),
+            Some(FileTestOperator::Readable)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-w"),
+            Some(FileTestOperator::Writable)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-x"),
+            Some(FileTestOperator::Executable)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-L"),
+            Some(FileTestOperator::SymbolicLink)
+        );
+        assert_eq!(
+            FileTestOperator::from_str("-h"),
+            Some(FileTestOperator::SymbolicLinkH)
+        );
         assert_eq!(FileTestOperator::from_str("-z"), None);
         assert_eq!(FileTestOperator::from_str("invalid"), None);
     }
@@ -401,9 +420,18 @@ mod tests {
 
     #[test]
     fn test_binary_file_test_operator_from_str() {
-        assert_eq!(BinaryFileTestOperator::from_str("-nt"), Some(BinaryFileTestOperator::NewerThan));
-        assert_eq!(BinaryFileTestOperator::from_str("-ot"), Some(BinaryFileTestOperator::OlderThan));
-        assert_eq!(BinaryFileTestOperator::from_str("-ef"), Some(BinaryFileTestOperator::SameFile));
+        assert_eq!(
+            BinaryFileTestOperator::from_str("-nt"),
+            Some(BinaryFileTestOperator::NewerThan)
+        );
+        assert_eq!(
+            BinaryFileTestOperator::from_str("-ot"),
+            Some(BinaryFileTestOperator::OlderThan)
+        );
+        assert_eq!(
+            BinaryFileTestOperator::from_str("-ef"),
+            Some(BinaryFileTestOperator::SameFile)
+        );
         assert_eq!(BinaryFileTestOperator::from_str("-e"), None);
     }
 

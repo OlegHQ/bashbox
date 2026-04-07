@@ -195,36 +195,43 @@ mod tests {
     #[test]
     fn test_parse_assoc_array_literal_simple() {
         let result = parse_assoc_array_literal("[foo]=bar [baz]=qux");
-        assert_eq!(result, vec![
-            ("foo".to_string(), "bar".to_string()),
-            ("baz".to_string(), "qux".to_string()),
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                ("foo".to_string(), "bar".to_string()),
+                ("baz".to_string(), "qux".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_assoc_array_literal_quoted_keys() {
         let result = parse_assoc_array_literal("['foo']=bar [\"baz\"]=qux");
-        assert_eq!(result, vec![
-            ("foo".to_string(), "bar".to_string()),
-            ("baz".to_string(), "qux".to_string()),
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                ("foo".to_string(), "bar".to_string()),
+                ("baz".to_string(), "qux".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_assoc_array_literal_quoted_values() {
         let result = parse_assoc_array_literal("[foo]='hello world' [bar]=\"test\"");
-        assert_eq!(result, vec![
-            ("foo".to_string(), "hello world".to_string()),
-            ("bar".to_string(), "test".to_string()),
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                ("foo".to_string(), "hello world".to_string()),
+                ("bar".to_string(), "test".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_parse_assoc_array_literal_escaped_in_value() {
         let result = parse_assoc_array_literal("[foo]='it\\'s'");
-        assert_eq!(result, vec![
-            ("foo".to_string(), "it's".to_string()),
-        ]);
+        assert_eq!(result, vec![("foo".to_string(), "it's".to_string()),]);
     }
 
     #[test]

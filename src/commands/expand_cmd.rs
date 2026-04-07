@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct ExpandCommand;
 
@@ -156,7 +158,7 @@ impl Command for ExpandCommand {
                 files.extend(ctx.args[i + 1..].iter().cloned());
                 break;
             } else if arg.starts_with('-') && arg != "-" {
-                return CommandResult::error(format!("expand: invalid option -- '{}'\n", &arg[1..]));
+                return CommandResult::error(invalid_option("expand", &arg[1..]));
             } else {
                 files.push(arg.clone());
                 i += 1;
@@ -177,7 +179,7 @@ impl Command for ExpandCommand {
                     Err(_) => {
                         return CommandResult::with_exit_code(
                             output,
-                            format!("expand: {}: No such file or directory\n", file),
+                            no_such_file("expand", file),
                             1,
                         );
                     }
@@ -192,11 +194,11 @@ impl Command for ExpandCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_expand_default_tabs() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -214,7 +216,7 @@ mod tests {
         assert_eq!(result.stdout, "a       b\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_expand_custom_tab_size() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

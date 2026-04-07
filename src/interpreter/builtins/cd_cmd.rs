@@ -8,13 +8,33 @@
 //! - cd -P - use physical path (resolve symlinks)
 //! - CDPATH support for relative paths
 
+use crate::fs::path::normalize_path;
+use crate::interpreter::helpers::result::{failure, result};
+use crate::interpreter::interpreter::FileSystem as SyncFileSystem;
 use crate::interpreter::types::{ExecResult, InterpreterState};
-use crate::interpreter::helpers::result::{result, failure};
 
-/// Handle the cd builtin command
+fn path_exists(fs: Option<&dyn SyncFileSystem>, path: &str) -> bool {
+    match fs {
+        Some(f) => f.exists(path),
+        None => std::path::Path::new(path).exists(),
+    }
+}
+
+fn path_is_dir(fs: Option<&dyn SyncFileSystem>, path: &str) -> bool {
+    match fs {
+        Some(f) => f.is_dir(path),
+        None => std::path::Path::new(path).is_dir(),
+    }
+}
+
+/// Handle the cd builtin command.
+///
+/// When `fs` is `Some`, directory checks use the interpreter sync VFS (e.g. virtual FS).
+/// When `None`, falls back to the host filesystem (unit tests only).
 pub fn handle_cd(
     state: &mut InterpreterState,
     args: &[String],
+    fs: Option<&dyn SyncFileSystem>,
 ) -> ExecResult {
     let mut target: String;
     let mut print_path = false;
@@ -45,9 +65,17 @@ pub fn handle_cd(
     // Get the target directory
     let remaining_args: Vec<&String> = args[i..].iter().collect();
     if remaining_args.is_empty() {
-        target = state.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string());
+        target = state
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/".to_string());
     } else if remaining_args[0] == "~" {
-        target = state.env.get("HOME").cloned().unwrap_or_else(|| "/".to_string());
+        target = state
+            .env
+            .get("HOME")
+            .cloned()
+            .unwrap_or_else(|| "/".to_string());
     } else if remaining_args[0] == "-" {
         target = state.previous_dir.clone();
         print_path = true; // cd - prints the new directory
@@ -73,7 +101,7 @@ pub fn handle_cd(
                 };
                 // In a real implementation, we would check if the directory exists
                 // For now, we just use the first CDPATH entry
-                if std::path::Path::new(&candidate).is_dir() {
+                if path_is_dir(fs, &candidate) {
                     target = candidate;
                     print_path = true;
                     break;
@@ -91,20 +119,25 @@ pub fn handle_cd(
 
     let new_dir = normalize_path(&path_to_check);
 
-    // Check if the directory exists
-    let path = std::path::Path::new(&new_dir);
-    if !path.exists() {
-        return failure(&format!("bash: cd: {}: No such file or directory\n", target));
+    if !path_exists(fs, &new_dir) {
+        return failure(&format!(
+            "bash: cd: {}: No such file or directory\n",
+            target
+        ));
     }
-    if !path.is_dir() {
+    if !path_is_dir(fs, &new_dir) {
         return failure(&format!("bash: cd: {}: Not a directory\n", target));
     }
 
     // If -P is specified, resolve symlinks to get the physical path
     let final_dir = if physical {
-        match std::fs::canonicalize(&new_dir) {
-            Ok(canonical) => canonical.to_string_lossy().to_string(),
-            Err(_) => new_dir.clone(), // If canonicalize fails, use the logical path
+        if fs.is_some() {
+            new_dir.clone()
+        } else {
+            match std::fs::canonicalize(&new_dir) {
+                Ok(canonical) => canonical.to_string_lossy().to_string(),
+                Err(_) => new_dir.clone(),
+            }
         }
     } else {
         new_dir.clone()
@@ -114,7 +147,9 @@ pub fn handle_cd(
     state.previous_dir = state.cwd.clone();
     state.cwd = final_dir.clone();
     state.env.insert("PWD".to_string(), state.cwd.clone());
-    state.env.insert("OLDPWD".to_string(), state.previous_dir.clone());
+    state
+        .env
+        .insert("OLDPWD".to_string(), state.previous_dir.clone());
 
     // cd - prints the new directory
     if print_path {
@@ -124,40 +159,9 @@ pub fn handle_cd(
     }
 }
 
-/// Normalize a path by resolving . and .. components
-fn normalize_path(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    let mut result_parts: Vec<&str> = Vec::new();
-
-    for part in parts {
-        if part == ".." {
-            result_parts.pop();
-        } else {
-            result_parts.push(part);
-        }
-    }
-
-    if result_parts.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", result_parts.join("/"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_normalize_path() {
-        assert_eq!(normalize_path("/"), "/");
-        assert_eq!(normalize_path("/foo/bar"), "/foo/bar");
-        assert_eq!(normalize_path("/foo/../bar"), "/bar");
-        assert_eq!(normalize_path("/foo/./bar"), "/foo/bar");
-        assert_eq!(normalize_path("/foo/bar/.."), "/foo");
-        assert_eq!(normalize_path("/foo/bar/../.."), "/");
-        assert_eq!(normalize_path("/foo//bar"), "/foo/bar");
-    }
 
     #[test]
     fn test_handle_cd_to_tmp() {
@@ -166,7 +170,7 @@ mod tests {
         state.env.insert("HOME".to_string(), "/tmp".to_string());
 
         // cd to /tmp
-        let result = handle_cd(&mut state, &["tmp".to_string()]);
+        let result = handle_cd(&mut state, &["tmp".to_string()], None);
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.cwd, "/tmp");
         assert_eq!(state.env.get("PWD"), Some(&"/tmp".to_string()));
@@ -179,7 +183,7 @@ mod tests {
         state.env.insert("HOME".to_string(), "/tmp".to_string());
 
         // cd with no args goes to HOME
-        let result = handle_cd(&mut state, &[]);
+        let result = handle_cd(&mut state, &[], None);
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.cwd, "/tmp");
     }
@@ -191,7 +195,7 @@ mod tests {
         state.previous_dir = "/var".to_string();
 
         // cd - goes to previous directory
-        let result = handle_cd(&mut state, &["-".to_string()]);
+        let result = handle_cd(&mut state, &["-".to_string()], None);
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.cwd, "/var");
         // Should print the new directory
@@ -204,7 +208,7 @@ mod tests {
         state.cwd = "/".to_string();
 
         // cd -P to /tmp (should resolve symlinks)
-        let result = handle_cd(&mut state, &["-P".to_string(), "tmp".to_string()]);
+        let result = handle_cd(&mut state, &["-P".to_string(), "tmp".to_string()], None);
         assert_eq!(result.exit_code, 0);
         // The path should be resolved (on macOS /tmp is a symlink to /private/tmp)
         // We just check that it succeeded and the path is set

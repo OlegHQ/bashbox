@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 const HISTORY_KEY: &str = "BASH_HISTORY";
 
@@ -7,16 +8,22 @@ pub struct HistoryCommand;
 
 #[async_trait]
 impl Command for HistoryCommand {
-    fn name(&self) -> &'static str { "history" }
+    fn name(&self) -> &'static str {
+        "history"
+    }
 
     async fn execute(&self, mut ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "history - display command history\n\nUsage: history [n]\n\nOptions:\n  -c      clear the history list\n".to_string()
             );
         }
 
-        let history_str = ctx.env.get(HISTORY_KEY).cloned().unwrap_or_else(|| "[]".to_string());
+        let history_str = ctx
+            .env
+            .get(HISTORY_KEY)
+            .cloned()
+            .unwrap_or_else(|| "[]".to_string());
         let history: Vec<String> = serde_json::from_str(&history_str).unwrap_or_default();
 
         if ctx.args.first().map(|s| s.as_str()) == Some("-c") {
@@ -25,7 +32,9 @@ impl Command for HistoryCommand {
         }
 
         let count = if let Some(arg) = ctx.args.first() {
-            arg.parse::<usize>().unwrap_or(history.len()).min(history.len())
+            arg.parse::<usize>()
+                .unwrap_or(history.len())
+                .min(history.len())
         } else {
             history.len()
         };
@@ -43,9 +52,9 @@ impl Command for HistoryCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -59,7 +68,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = HistoryCommand.execute(ctx).await;
@@ -67,7 +76,7 @@ mod tests {
         assert!(result.stdout.contains("-c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_history() {
         let ctx = create_ctx(vec![]);
         let result = HistoryCommand.execute(ctx).await;
@@ -75,30 +84,37 @@ mod tests {
         assert!(result.stdout.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_with_history() {
         let mut ctx = create_ctx(vec![]);
-        ctx.env.insert(HISTORY_KEY.to_string(), r#"["ls","pwd","echo hello"]"#.to_string());
+        ctx.env.insert(
+            HISTORY_KEY.to_string(),
+            r#"["ls","pwd","echo hello"]"#.to_string(),
+        );
         let result = HistoryCommand.execute(ctx).await;
         assert!(result.stdout.contains("ls"));
         assert!(result.stdout.contains("pwd"));
         assert!(result.stdout.contains("echo hello"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_history_count() {
         let mut ctx = create_ctx(vec!["2"]);
-        ctx.env.insert(HISTORY_KEY.to_string(), r#"["ls","pwd","echo hello"]"#.to_string());
+        ctx.env.insert(
+            HISTORY_KEY.to_string(),
+            r#"["ls","pwd","echo hello"]"#.to_string(),
+        );
         let result = HistoryCommand.execute(ctx).await;
         assert!(!result.stdout.contains("ls"));
         assert!(result.stdout.contains("pwd"));
         assert!(result.stdout.contains("echo hello"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clear_history() {
         let mut ctx = create_ctx(vec!["-c"]);
-        ctx.env.insert(HISTORY_KEY.to_string(), r#"["ls","pwd"]"#.to_string());
+        ctx.env
+            .insert(HISTORY_KEY.to_string(), r#"["ls","pwd"]"#.to_string());
         let result = HistoryCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.is_empty());

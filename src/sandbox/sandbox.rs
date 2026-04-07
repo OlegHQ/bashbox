@@ -49,9 +49,7 @@ impl Sandbox {
         if let Some(env) = &opts.env {
             for (key, value) in env {
                 let escaped = value.replace('\\', "\\\\").replace(' ', "\\ ");
-                preamble_parts.push(
-                    format!("for {} in {}; do true; done", key, escaped),
-                );
+                preamble_parts.push(format!("for {} in {}; do true; done", key, escaped));
             }
         }
 
@@ -73,10 +71,7 @@ impl Sandbox {
 
     /// Write multiple files to the sandbox filesystem.
     /// Parent directories are created automatically.
-    pub async fn write_files(
-        &mut self,
-        files: HashMap<String, FileContent>,
-    ) -> Result<(), String> {
+    pub async fn write_files(&mut self, files: HashMap<String, FileContent>) -> Result<(), String> {
         for (path, content) in &files {
             let data = match content {
                 FileContent::Text(s) => s.clone(),
@@ -132,8 +127,7 @@ impl Sandbox {
         match encoding {
             Some(FileEncoding::Base64) => {
                 use base64::Engine;
-                Ok(base64::engine::general_purpose::STANDARD
-                    .encode(content.as_bytes()))
+                Ok(base64::engine::general_purpose::STANDARD.encode(content.as_bytes()))
             }
             _ => Ok(content),
         }
@@ -251,10 +245,7 @@ mod tests {
             },
         );
         sandbox.write_files(files).await.unwrap();
-        let content = sandbox
-            .read_file("/home/user/b64.txt", None)
-            .await
-            .unwrap();
+        let content = sandbox.read_file("/home/user/b64.txt", None).await.unwrap();
         assert_eq!(content, "hello");
     }
 

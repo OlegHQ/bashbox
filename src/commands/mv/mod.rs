@@ -1,6 +1,7 @@
 // src/commands/mv/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct MvCommand;
 
@@ -11,7 +12,7 @@ impl Command for MvCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: mv [OPTION]... SOURCE... DEST\n\n\
                  Rename SOURCE to DEST, or move SOURCE(s) to DIRECTORY.\n\n\
@@ -19,7 +20,8 @@ impl Command for MvCommand {
                    -f, --force        do not prompt before overwriting\n\
                    -n, --no-clobber   do not overwrite an existing file\n\
                    -v, --verbose      explain what is being done\n\
-                       --help         display this help and exit\n".to_string()
+                       --help         display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -53,10 +55,7 @@ impl Command for MvCommand {
 
         // 如果有多个源，目标必须是目录
         if sources.len() > 1 && !dest_is_dir {
-            return CommandResult::error(format!(
-                "mv: target '{}' is not a directory\n",
-                dest
-            ));
+            return CommandResult::error(format!("mv: target '{}' is not a directory\n", dest));
         }
 
         let mut stdout = String::new();
@@ -68,7 +67,10 @@ impl Command for MvCommand {
 
             // 检查源是否存在
             if !ctx.fs.exists(&src_path).await {
-                stderr.push_str(&format!("mv: cannot stat '{}': No such file or directory\n", src));
+                stderr.push_str(&format!(
+                    "mv: cannot stat '{}': No such file or directory\n",
+                    src
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -106,32 +108,13 @@ impl Command for MvCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs, MkdirOptions};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::{FileSystem, MkdirOptions};
 
-    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_rename() {
-        let ctx = make_ctx_with_files(
-            vec!["/old.txt", "/new.txt"],
-            vec![("/old.txt", "content")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/old.txt", "/new.txt"], vec![("/old.txt", "content")]).await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -140,11 +123,13 @@ mod tests {
         assert!(fs.exists("/new.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_to_directory() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/src.txt", b"content").await.unwrap();
-        fs.mkdir("/destdir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/destdir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/src.txt".to_string(), "/destdir".to_string()],
             stdin: String::new(),
@@ -161,12 +146,13 @@ mod tests {
         assert!(fs.exists("/destdir/src.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_no_clobber() {
         let ctx = make_ctx_with_files(
             vec!["-n", "/src.txt", "/dest.txt"],
             vec![("/src.txt", "new"), ("/dest.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -176,7 +162,7 @@ mod tests {
         assert_eq!(content, "old"); // 目标未被覆盖
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_nonexistent() {
         let ctx = make_ctx_with_files(vec!["/nonexistent.txt", "/dest.txt"], vec![]).await;
         let cmd = MvCommand;
@@ -185,12 +171,10 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_remove_source() {
-        let ctx = make_ctx_with_files(
-            vec!["/old.txt", "/new.txt"],
-            vec![("/old.txt", "content")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/old.txt", "/new.txt"], vec![("/old.txt", "content")]).await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -199,13 +183,18 @@ mod tests {
         assert!(fs.exists("/new.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_rename_in_same_directory() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/dir/oldname.txt", b"content").await.unwrap();
         let ctx = CommandContext {
-            args: vec!["/dir/oldname.txt".to_string(), "/dir/newname.txt".to_string()],
+            args: vec![
+                "/dir/oldname.txt".to_string(),
+                "/dir/newname.txt".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -220,14 +209,20 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_multiple_files_to_directory() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/a.txt", b"aaa").await.unwrap();
         fs.write_file("/b.txt", b"bbb").await.unwrap();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
-            args: vec!["/a.txt".to_string(), "/b.txt".to_string(), "/dir".to_string()],
+            args: vec![
+                "/a.txt".to_string(),
+                "/b.txt".to_string(),
+                "/dir".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -244,22 +239,25 @@ mod tests {
         assert!(!fs.exists("/b.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_multiple_files_to_non_directory() {
         let ctx = make_ctx_with_files(
             vec!["/a.txt", "/b.txt", "/nonexistent"],
             vec![("/a.txt", ""), ("/b.txt", "")],
-        ).await;
+        )
+        .await;
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("not a directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_directory() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/srcdir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/srcdir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/srcdir/file.txt", b"content").await.unwrap();
         let ctx = CommandContext {
             args: vec!["/srcdir".to_string(), "/dstdir".to_string()],
@@ -278,12 +276,18 @@ mod tests {
         assert!(!fs.exists("/srcdir").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_nested_directories() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/src/a", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/src/a/b", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/src/a", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/src/a/b", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/src/a/b/c.txt", b"deep").await.unwrap();
         fs.write_file("/src/root.txt", b"root").await.unwrap();
         let ctx = CommandContext {
@@ -303,12 +307,13 @@ mod tests {
         assert!(!fs.exists("/src").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_overwrite_destination() {
         let ctx = make_ctx_with_files(
             vec!["/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -318,24 +323,27 @@ mod tests {
         assert!(!fs.exists("/src.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_missing_destination() {
-        let ctx = make_ctx_with_files(
-            vec!["/src.txt"],
-            vec![("/src.txt", "")],
-        ).await;
+        let ctx = make_ctx_with_files(vec!["/src.txt"], vec![("/src.txt", "")]).await;
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("missing destination"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_relative_paths() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/home", &MkdirOptions { recursive: false }).await.unwrap();
-        fs.mkdir("/home/user", &MkdirOptions { recursive: false }).await.unwrap();
-        fs.write_file("/home/user/old.txt", b"content").await.unwrap();
+        fs.mkdir("/home", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.mkdir("/home/user", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.write_file("/home/user/old.txt", b"content")
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["old.txt".to_string(), "new.txt".to_string()],
             stdin: String::new(),
@@ -353,12 +361,16 @@ mod tests {
         assert!(!fs.exists("/home/user/old.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_directory_into_existing_directory() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/src", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/src", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/src/file.txt", b"content").await.unwrap();
-        fs.mkdir("/dst", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dst", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/src".to_string(), "/dst/".to_string()],
             stdin: String::new(),
@@ -376,12 +388,13 @@ mod tests {
         assert!(!fs.exists("/src").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_force_flag() {
         let ctx = make_ctx_with_files(
             vec!["-f", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -391,12 +404,13 @@ mod tests {
         assert_eq!(content, "new");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_no_clobber_skip_existing() {
         let ctx = make_ctx_with_files(
             vec!["-n", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -407,12 +421,13 @@ mod tests {
         assert_eq!(content, "old");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_no_clobber_when_dest_not_exists() {
         let ctx = make_ctx_with_files(
             vec!["-n", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "content")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -422,12 +437,13 @@ mod tests {
         assert!(!fs.exists("/src.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_verbose() {
         let ctx = make_ctx_with_files(
             vec!["-v", "/old.txt", "/new.txt"],
             vec![("/old.txt", "content")],
-        ).await;
+        )
+        .await;
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -436,24 +452,26 @@ mod tests {
         assert!(result.stdout.contains("/new.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_combined_flags_fv() {
         let ctx = make_ctx_with_files(
             vec!["-f", "-v", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("renamed"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_no_clobber_long_flag() {
         let ctx = make_ctx_with_files(
             vec!["--no-clobber", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
@@ -463,24 +481,26 @@ mod tests {
         assert_eq!(content, "old");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_verbose_long_flag() {
         let ctx = make_ctx_with_files(
             vec!["--verbose", "/old.txt", "/new.txt"],
             vec![("/old.txt", "content")],
-        ).await;
+        )
+        .await;
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("renamed"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_force_long_flag() {
         let ctx = make_ctx_with_files(
             vec!["--force", "/src.txt", "/dst.txt"],
             vec![("/src.txt", "new"), ("/dst.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = MvCommand;
         let result = cmd.execute(ctx).await;

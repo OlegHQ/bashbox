@@ -1,6 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::RmOptions;
+use async_trait::async_trait;
 
 pub struct RmdirCommand;
 
@@ -33,7 +34,12 @@ impl Command for RmdirCommand {
                         match c {
                             'p' => parents = true,
                             'v' => verbose = true,
-                            _ => return CommandResult::error(format!("rmdir: invalid option -- '{}'\n", c)),
+                            _ => {
+                                return CommandResult::error(invalid_option(
+                                    "rmdir",
+                                    c.encode_utf8(&mut [0u8; 4]),
+                                ))
+                            }
                         }
                     }
                 }
@@ -62,7 +68,12 @@ impl Command for RmdirCommand {
     }
 }
 
-async fn remove_dir(ctx: &CommandContext, dir: &str, parents: bool, verbose: bool) -> CommandResult {
+async fn remove_dir(
+    ctx: &CommandContext,
+    dir: &str,
+    parents: bool,
+    verbose: bool,
+) -> CommandResult {
     let mut stdout = String::new();
     let full_path = ctx.fs.resolve_path(&ctx.cwd, dir);
 
@@ -104,7 +115,12 @@ async fn remove_dir(ctx: &CommandContext, dir: &str, parents: bool, verbose: boo
     CommandResult::success(stdout)
 }
 
-async fn remove_single_dir(ctx: &CommandContext, full_path: &str, display_path: &str, verbose: bool) -> CommandResult {
+async fn remove_single_dir(
+    ctx: &CommandContext,
+    full_path: &str,
+    display_path: &str,
+    verbose: bool,
+) -> CommandResult {
     if !ctx.fs.exists(full_path).await {
         return CommandResult::error(format!(
             "rmdir: failed to remove '{}': No such file or directory\n",
@@ -146,7 +162,17 @@ async fn remove_single_dir(ctx: &CommandContext, full_path: &str, display_path: 
         }
     }
 
-    if let Err(e) = ctx.fs.rm(full_path, &RmOptions { recursive: false, force: false }).await {
+    if let Err(e) = ctx
+        .fs
+        .rm(
+            full_path,
+            &RmOptions {
+                recursive: false,
+                force: false,
+            },
+        )
+        .await
+    {
         return CommandResult::error(format!(
             "rmdir: failed to remove '{}': {}\n",
             display_path, e
@@ -173,9 +199,9 @@ fn get_parent_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     async fn create_ctx_with_fs() -> (CommandContext, Arc<InMemoryFs>) {
         let fs = Arc::new(InMemoryFs::new());
@@ -191,7 +217,7 @@ mod tests {
         (ctx, fs)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rmdir_missing_operand() {
         let (ctx, _) = create_ctx_with_fs().await;
         let cmd = RmdirCommand;
@@ -200,7 +226,7 @@ mod tests {
         assert!(result.stderr.contains("missing operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rmdir_help() {
         let (mut ctx, _) = create_ctx_with_fs().await;
         ctx.args = vec!["--help".to_string()];

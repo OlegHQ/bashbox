@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use crate::fs::resolve_under_cwd;
+use async_trait::async_trait;
 
 pub struct TacCommand;
 
@@ -11,19 +13,12 @@ impl Command for TacCommand {
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let content = if !ctx.args.is_empty() && ctx.args[0] != "-" {
-            let file_path = if ctx.args[0].starts_with('/') {
-                ctx.args[0].clone()
-            } else {
-                format!("{}/{}", ctx.cwd, ctx.args[0])
-            };
+            let file_path = resolve_under_cwd(&ctx.cwd, &ctx.args[0]);
 
             match ctx.fs.read_file(&file_path).await {
                 Ok(content) => content,
                 Err(_) => {
-                    return CommandResult::error(format!(
-                        "tac: {}: No such file or directory\n",
-                        ctx.args[0]
-                    ));
+                    return CommandResult::error(no_such_file("tac", &ctx.args[0]));
                 }
             }
         } else {
@@ -49,11 +44,11 @@ impl Command for TacCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tac_stdin() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -71,7 +66,7 @@ mod tests {
         assert_eq!(result.stdout, "line3\nline2\nline1\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tac_empty() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -89,7 +84,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tac_file_not_found() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

@@ -230,7 +230,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["1", "2", "3", "4", "5"].into_iter().map(String::from).collect())
+            Some(
+                vec!["1", "2", "3", "4", "5"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 
@@ -246,7 +251,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["5", "4", "3", "2", "1"].into_iter().map(String::from).collect())
+            Some(
+                vec!["5", "4", "3", "2", "1"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 
@@ -262,7 +272,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["1", "3", "5", "7", "9"].into_iter().map(String::from).collect())
+            Some(
+                vec!["1", "3", "5", "7", "9"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 
@@ -278,7 +293,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["01", "02", "03"].into_iter().map(String::from).collect())
+            Some(
+                vec!["01", "02", "03"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 
@@ -294,7 +314,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["a", "b", "c", "d", "e"].into_iter().map(String::from).collect())
+            Some(
+                vec!["a", "b", "c", "d", "e"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 
@@ -310,7 +335,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             result.expanded,
-            Some(vec!["e", "d", "c", "b", "a"].into_iter().map(String::from).collect())
+            Some(
+                vec!["e", "d", "c", "b", "a"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
         );
     }
 

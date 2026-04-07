@@ -1,7 +1,6 @@
-/// Form data handling for curl command
-
-use std::collections::HashMap;
 use super::types::FormField;
+/// Form data handling for curl command
+use std::collections::HashMap;
 
 /// URL-encode a single character
 fn url_encode_char(c: char) -> String {
@@ -55,7 +54,10 @@ pub fn parse_form_field(spec: &str) -> Option<FormField> {
 
     // Check for ;filename= suffix
     if let Some(fn_pos) = value.find(";filename=") {
-        let end = value[fn_pos + 10..].find(';').map(|p| fn_pos + 10 + p).unwrap_or(value.len());
+        let end = value[fn_pos + 10..]
+            .find(';')
+            .map(|p| fn_pos + 10 + p)
+            .unwrap_or(value.len());
         filename = Some(value[fn_pos + 10..end].to_string());
         value = format!("{}{}", &value[..fn_pos], &value[end..]);
     }

@@ -1,8 +1,8 @@
 //! Variable assignment helpers for declare, readonly, local, export builtins.
 
-use crate::interpreter::types::InterpreterState;
 use crate::interpreter::builtins::declare_array_parsing::parse_array_elements;
 use crate::interpreter::helpers::readonly::check_readonly_error;
+use crate::interpreter::types::InterpreterState;
 
 /// Result of parsing an assignment argument.
 #[derive(Debug, Clone)]
@@ -94,7 +94,9 @@ fn is_valid_identifier(s: &str) -> bool {
     if !matches!(first, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
         return false;
     }
-    bytes[1..].iter().all(|&b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
+    bytes[1..]
+        .iter()
+        .all(|&b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
 }
 
 /// Options for setting a variable.
@@ -129,18 +131,24 @@ pub fn set_variable(
             for (i, elem) in elements.iter().enumerate() {
                 state.env.insert(format!("{}_{}", name, i), elem.clone());
             }
-            state.env.insert(format!("{}__length", name), elements.len().to_string());
+            state
+                .env
+                .insert(format!("{}__length", name), elements.len().to_string());
         }
     } else if let Some(ref index_str) = assignment.array_index {
         if let Some(ref value) = assignment.value {
             // Array index assignment: a[index]=value
             // For now, try to parse as a simple number
             let index: i64 = index_str.trim().parse().unwrap_or(0);
-            state.env.insert(format!("{}_{}", name, index), value.clone());
+            state
+                .env
+                .insert(format!("{}_{}", name, index), value.clone());
 
             // Update array length if needed (sparse arrays may have gaps)
             let length_key = format!("{}__length", name);
-            let current_length: i64 = state.env.get(&length_key)
+            let current_length: i64 = state
+                .env
+                .get(&length_key)
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             if index >= current_length {
@@ -164,7 +172,10 @@ pub fn set_variable(
 /// Get the call depth at which a local variable was declared.
 /// Returns None if the variable is not a local variable.
 pub fn get_local_var_depth(state: &InterpreterState, name: &str) -> Option<u32> {
-    state.local_var_depth.as_ref().and_then(|map| map.get(name).copied())
+    state
+        .local_var_depth
+        .as_ref()
+        .and_then(|map| map.get(name).copied())
 }
 
 /// Clear the local variable depth tracking for a variable.
@@ -196,7 +207,10 @@ pub fn push_local_var_stack(
     };
 
     let stack_map = state.local_var_stack.as_mut().unwrap();
-    stack_map.entry(name.to_string()).or_insert_with(Vec::new).push(entry);
+    stack_map
+        .entry(name.to_string())
+        .or_insert_with(Vec::new)
+        .push(entry);
 }
 
 /// Pop the top entry from the local var stack for a variable.
@@ -260,7 +274,10 @@ mod tests {
         let result = parse_assignment("arr=(a b c)");
         assert_eq!(result.name, "arr");
         assert!(result.is_array);
-        assert_eq!(result.array_elements, Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+        assert_eq!(
+            result.array_elements,
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
     }
 
     #[test]

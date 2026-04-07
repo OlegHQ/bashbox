@@ -2,26 +2,17 @@
 //!
 //! Standalone helper functions used by the interpreter.
 
-use crate::{WordNode, WordPart, LiteralPart};
+use brush_parser::ast as bast;
 
-/// Check if a WordNode is a literal match for any of the given strings.
-/// Returns true only if the word is a single literal (no expansions, no quoting)
-/// that matches one of the target strings.
+/// Check if a Word is a literal match for any of the given strings.
+/// Since `bast::Word` is just a string wrapper, this checks whether
+/// the word's value matches one of the target strings.
 ///
 /// This is used to detect assignment builtins at "parse time" - bash determines
 /// whether a command is export/declare/etc based on the literal token, not the
 /// runtime value after expansion.
-pub fn is_word_literal_match(word: &WordNode, targets: &[&str]) -> bool {
-    // Must be a single part
-    if word.parts.len() != 1 {
-        return false;
-    }
-    let part = &word.parts[0];
-    // Must be a simple literal (not quoted, not an expansion)
-    match part {
-        WordPart::Literal(LiteralPart { value }) => targets.contains(&value.as_str()),
-        _ => false,
-    }
+pub fn is_word_literal_match(word: &bast::Word, targets: &[&str]) -> bool {
+    targets.contains(&word.value.as_str())
 }
 
 /// Parsed read-write file descriptor content.
@@ -61,7 +52,11 @@ pub fn parse_rw_fd_content(fd_content: &str) -> Option<RwFdContent> {
     // Extract content (after position and colon)
     let content = remaining[pos_colon_idx + 1..].to_string();
 
-    Some(RwFdContent { path, position, content })
+    Some(RwFdContent {
+        path,
+        position,
+        content,
+    })
 }
 
 #[cfg(test)]
@@ -70,20 +65,22 @@ mod tests {
 
     #[test]
     fn test_is_word_literal_match() {
-        let word = WordNode {
-            parts: vec![WordPart::Literal(LiteralPart { value: "export".to_string() })],
+        let word = bast::Word {
+            value: "export".to_string(),
+            loc: None,
         };
-        assert!(is_word_literal_match(&word, &["export", "declare", "local"]));
+        assert!(is_word_literal_match(
+            &word,
+            &["export", "declare", "local"]
+        ));
         assert!(!is_word_literal_match(&word, &["declare", "local"]));
     }
 
     #[test]
-    fn test_is_word_literal_match_multiple_parts() {
-        let word = WordNode {
-            parts: vec![
-                WordPart::Literal(LiteralPart { value: "ex".to_string() }),
-                WordPart::Literal(LiteralPart { value: "port".to_string() }),
-            ],
+    fn test_is_word_literal_match_no_match() {
+        let word = bast::Word {
+            value: "echo".to_string(),
+            loc: None,
         };
         assert!(!is_word_literal_match(&word, &["export"]));
     }

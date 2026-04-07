@@ -42,10 +42,10 @@ impl Default for KeyOptions {
 /// A key specification parsed from -k KEYDEF
 #[derive(Debug, Clone)]
 pub struct KeySpec {
-    pub start_field: usize,  // 1-indexed
-    pub start_char: usize,   // 1-indexed, 0 means whole field
-    pub end_field: usize,    // 1-indexed, 0 means end of line
-    pub end_char: usize,     // 1-indexed, 0 means end of field
+    pub start_field: usize, // 1-indexed
+    pub start_char: usize,  // 1-indexed, 0 means whole field
+    pub end_field: usize,   // 1-indexed, 0 means end of line
+    pub end_char: usize,    // 1-indexed, 0 means end of field
     pub options: KeyOptions,
 }
 
@@ -367,9 +367,7 @@ fn split_version(s: &str) -> Vec<VersionPart> {
             current.push(c);
         } else {
             if in_num {
-                parts.push(VersionPart::Num(
-                    current.parse().unwrap_or(0),
-                ));
+                parts.push(VersionPart::Num(current.parse().unwrap_or(0)));
             } else {
                 parts.push(VersionPart::Str(current.clone()));
             }
@@ -381,9 +379,7 @@ fn split_version(s: &str) -> Vec<VersionPart> {
 
     if !current.is_empty() {
         if in_num {
-            parts.push(VersionPart::Num(
-                current.parse().unwrap_or(0),
-            ));
+            parts.push(VersionPart::Num(current.parse().unwrap_or(0)));
         } else {
             parts.push(VersionPart::Str(current));
         }
@@ -400,9 +396,23 @@ fn dictionary_filter(s: &str) -> String {
 }
 
 /// Compare two values based on the comparison mode
-pub fn compare_values(a: &str, b: &str, mode: CompareMode, ignore_case: bool, dict_order: bool) -> Ordering {
-    let a_val = if dict_order { dictionary_filter(a) } else { a.to_string() };
-    let b_val = if dict_order { dictionary_filter(b) } else { b.to_string() };
+pub fn compare_values(
+    a: &str,
+    b: &str,
+    mode: CompareMode,
+    ignore_case: bool,
+    dict_order: bool,
+) -> Ordering {
+    let a_val = if dict_order {
+        dictionary_filter(a)
+    } else {
+        a.to_string()
+    };
+    let b_val = if dict_order {
+        dictionary_filter(b)
+    } else {
+        b.to_string()
+    };
 
     match mode {
         CompareMode::String => {
@@ -417,15 +427,9 @@ pub fn compare_values(a: &str, b: &str, mode: CompareMode, ignore_case: bool, di
             let nb = b_val.trim().parse::<f64>().unwrap_or(0.0);
             na.partial_cmp(&nb).unwrap_or(Ordering::Equal)
         }
-        CompareMode::HumanNumeric => {
-            compare_human_sizes(&a_val, &b_val)
-        }
-        CompareMode::Version => {
-            compare_versions(&a_val, &b_val)
-        }
-        CompareMode::Month => {
-            compare_months(&a_val, &b_val)
-        }
+        CompareMode::HumanNumeric => compare_human_sizes(&a_val, &b_val),
+        CompareMode::Version => compare_versions(&a_val, &b_val),
+        CompareMode::Month => compare_months(&a_val, &b_val),
     }
 }
 
@@ -474,13 +478,7 @@ pub fn create_comparator(opts: &SortOptions) -> Box<dyn Fn(&str, &str) -> Orderi
                 CompareMode::String
             };
 
-            let mut ord = compare_values(
-                a,
-                b,
-                mode,
-                opts.ignore_case,
-                opts.dictionary_order,
-            );
+            let mut ord = compare_values(a, b, mode, opts.ignore_case, opts.dictionary_order);
 
             if opts.reverse {
                 ord = ord.reverse();
@@ -564,13 +562,25 @@ mod tests {
 
     #[test]
     fn test_compare_values_string() {
-        assert_eq!(compare_values("abc", "abd", CompareMode::String, false, false), Ordering::Less);
-        assert_eq!(compare_values("ABC", "abc", CompareMode::String, true, false), Ordering::Equal);
+        assert_eq!(
+            compare_values("abc", "abd", CompareMode::String, false, false),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_values("ABC", "abc", CompareMode::String, true, false),
+            Ordering::Equal
+        );
     }
 
     #[test]
     fn test_compare_values_numeric() {
-        assert_eq!(compare_values("10", "9", CompareMode::Numeric, false, false), Ordering::Greater);
-        assert_eq!(compare_values("2.5", "2.5", CompareMode::Numeric, false, false), Ordering::Equal);
+        assert_eq!(
+            compare_values("10", "9", CompareMode::Numeric, false, false),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_values("2.5", "2.5", CompareMode::Numeric, false, false),
+            Ordering::Equal
+        );
     }
 }

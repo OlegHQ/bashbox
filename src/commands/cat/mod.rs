@@ -1,6 +1,8 @@
 // src/commands/cat/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::vfs_helpers::read_file_accumulate_errors;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct CatCommand;
 
@@ -13,13 +15,14 @@ impl Command for CatCommand {
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
 
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: cat [OPTION]... [FILE]...\n\n\
                  Concatenate FILE(s) to standard output.\n\n\
                  Options:\n\
                    -n, --number     number all output lines\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -48,14 +51,18 @@ impl Command for CatCommand {
             let content = if file == "-" {
                 ctx.stdin.clone()
             } else {
-                let path = ctx.fs.resolve_path(&ctx.cwd, file);
-                match ctx.fs.read_file(&path).await {
-                    Ok(c) => c,
-                    Err(_) => {
-                        stderr.push_str(&format!("cat: {}: No such file or directory\n", file));
-                        exit_code = 1;
-                        continue;
-                    }
+                match read_file_accumulate_errors(
+                    ctx.fs.as_ref(),
+                    &ctx.cwd,
+                    "cat",
+                    file,
+                    &mut stderr,
+                    &mut exit_code,
+                )
+                .await
+                {
+                    Some(c) => c,
+                    None => continue,
                 }
             };
 
@@ -99,63 +106,46 @@ fn add_line_numbers(content: &str, start_line: usize) -> (String, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_single_file() {
-        let ctx = make_ctx_with_files(
-            vec!["/test.txt"],
-            vec![("/test.txt", "hello world\n")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/test.txt"], vec![("/test.txt", "hello world\n")]).await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "hello world\n");
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_multiple_files() {
         let ctx = make_ctx_with_files(
             vec!["/a.txt", "/b.txt"],
             vec![("/a.txt", "aaa\n"), ("/b.txt", "bbb\n")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "aaa\nbbb\n");
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_with_line_numbers() {
         let ctx = make_ctx_with_files(
             vec!["-n", "/test.txt"],
             vec![("/test.txt", "line1\nline2\n")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "     1\tline1\n     2\tline2\n");
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_file_not_found() {
         let ctx = make_ctx_with_files(vec!["/nonexistent.txt"], vec![]).await;
         let cmd = CatCommand;
@@ -164,7 +154,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_stdin() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -182,12 +172,10 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_file_with_newline() {
-        let ctx = make_ctx_with_files(
-            vec!["/test.txt"],
-            vec![("/test.txt", "hello world\n")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/test.txt"], vec![("/test.txt", "hello world\n")]).await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "hello world\n");
@@ -195,12 +183,13 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_three_files() {
         let ctx = make_ctx_with_files(
             vec!["/a.txt", "/b.txt", "/c.txt"],
             vec![("/a.txt", "A"), ("/b.txt", "B"), ("/c.txt", "C")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "ABC");
@@ -208,12 +197,9 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_line_numbers_padded() {
-        let ctx = make_ctx_with_files(
-            vec!["-n", "/test.txt"],
-            vec![("/test.txt", "a\n")],
-        ).await;
+        let ctx = make_ctx_with_files(vec!["-n", "/test.txt"], vec![("/test.txt", "a\n")]).await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "     1\ta\n");
@@ -221,12 +207,13 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_continue_after_missing_file() {
         let ctx = make_ctx_with_files(
             vec!["/missing.txt", "/exists.txt"],
             vec![("/exists.txt", "content")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "content");
@@ -234,12 +221,9 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_empty_file() {
-        let ctx = make_ctx_with_files(
-            vec!["/empty.txt"],
-            vec![("/empty.txt", "")],
-        ).await;
+        let ctx = make_ctx_with_files(vec!["/empty.txt"], vec![("/empty.txt", "")]).await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "");
@@ -247,12 +231,13 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_special_characters() {
         let ctx = make_ctx_with_files(
             vec!["/special.txt"],
             vec![("/special.txt", "tab:\there\nnewline above")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "tab:\there\nnewline above");
@@ -260,12 +245,18 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_relative_path() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/home", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
-        fs.mkdir("/home/user", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
-        fs.write_file("/home/user/file.txt", b"content").await.unwrap();
+        fs.mkdir("/home", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.mkdir("/home/user", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.write_file("/home/user/file.txt", b"content")
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["file.txt".to_string()],
             stdin: String::new(),
@@ -282,7 +273,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_stdin_with_file() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/file.txt", b"from file\n").await.unwrap();
@@ -302,7 +293,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_file_with_stdin() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/file.txt", b"from file\n").await.unwrap();
@@ -322,7 +313,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_stdin_with_line_numbers() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/file.txt", b"line1\n").await.unwrap();
@@ -342,12 +333,13 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cat_number_flag_long() {
         let ctx = make_ctx_with_files(
             vec!["--number", "/test.txt"],
             vec![("/test.txt", "line1\nline2\n")],
-        ).await;
+        )
+        .await;
         let cmd = CatCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.stdout, "     1\tline1\n     2\tline2\n");

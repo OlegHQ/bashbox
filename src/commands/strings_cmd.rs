@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct StringsCommand;
 
@@ -33,7 +35,11 @@ fn format_offset(offset: usize, format: Option<OffsetFormat>) -> String {
     }
 }
 
-fn extract_strings(data: &[u8], min_length: usize, offset_format: Option<OffsetFormat>) -> Vec<String> {
+fn extract_strings(
+    data: &[u8],
+    min_length: usize,
+    offset_format: Option<OffsetFormat>,
+) -> Vec<String> {
     let mut results = Vec::new();
     let mut current_string = String::new();
     let mut string_start = 0;
@@ -100,7 +106,10 @@ impl Command for StringsCommand {
                     }
                 }
                 i += 1;
-            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
                 match arg[1..].parse::<usize>() {
                     Ok(n) if n >= 1 => min_length = n,
                     _ => {
@@ -143,7 +152,7 @@ impl Command for StringsCommand {
                 files.extend(ctx.args[i + 1..].iter().cloned());
                 break;
             } else if arg.starts_with('-') && arg != "-" {
-                return CommandResult::error(format!("strings: invalid option -- '{}'\n", &arg[1..]));
+                return CommandResult::error(invalid_option("strings", &arg[1..]));
             } else {
                 files.push(arg.clone());
                 i += 1;
@@ -168,7 +177,7 @@ impl Command for StringsCommand {
                         Err(_) => {
                             return CommandResult::with_exit_code(
                                 output,
-                                format!("strings: {}: No such file or directory\n", file),
+                                no_such_file("strings", file),
                                 1,
                             );
                         }
@@ -188,11 +197,11 @@ impl Command for StringsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_strings_basic() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -211,7 +220,7 @@ mod tests {
         assert!(result.stdout.contains("world"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_strings_min_length() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

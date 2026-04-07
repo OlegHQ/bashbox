@@ -10,15 +10,15 @@
 //! - local-unset (same scope): value-unset - clears value but keeps local cell
 //! - dynamic-unset (different scope): cell-unset - removes local cell, exposes outer value
 
-use regex_lite::Regex;
-use crate::interpreter::types::{ExecResult, InterpreterState};
-use crate::interpreter::helpers::result::result;
+use crate::interpreter::builtins::variable_assignment::{
+    clear_local_var_depth, get_local_var_depth, pop_local_var_stack,
+};
+use crate::interpreter::expansion::variable::{get_array_elements, is_array, ArrayIndex};
 use crate::interpreter::helpers::nameref::{is_nameref, resolve_nameref};
 use crate::interpreter::helpers::readonly::is_readonly;
-use crate::interpreter::expansion::variable::{is_array, get_array_elements, ArrayIndex};
-use crate::interpreter::builtins::variable_assignment::{
-    get_local_var_depth, clear_local_var_depth, pop_local_var_stack,
-};
+use crate::interpreter::helpers::result::result;
+use crate::interpreter::types::{ExecResult, InterpreterState};
+use regex_lite::Regex;
 
 /// Check if a name is a valid bash variable name.
 fn is_valid_variable_name(name: &str) -> bool {
@@ -33,7 +33,8 @@ fn is_valid_variable_name(name: &str) -> bool {
 /// Returns true if a cell-unset was performed, false otherwise.
 fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
     // Check if this variable uses the localVarStack (for nested local declarations)
-    let has_stack_entry = state.local_var_stack
+    let has_stack_entry = state
+        .local_var_stack
         .as_ref()
         .map_or(false, |m| m.contains_key(var_name));
 
@@ -48,7 +49,8 @@ fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
             }
 
             // Check if there are more entries in the stack
-            let has_remaining = state.local_var_stack
+            let has_remaining = state
+                .local_var_stack
                 .as_ref()
                 .map_or(false, |m| m.get(var_name).map_or(false, |s| !s.is_empty()));
 
@@ -63,7 +65,11 @@ fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
                 if state.fully_unset_locals.is_none() {
                     state.fully_unset_locals = Some(std::collections::HashMap::new());
                 }
-                state.fully_unset_locals.as_mut().unwrap().insert(var_name.to_string(), scope_index);
+                state
+                    .fully_unset_locals
+                    .as_mut()
+                    .unwrap()
+                    .insert(var_name.to_string(), scope_index);
 
                 // Bash 5.1 behavior: after cell-unset removes all locals, also remove tempenv
                 // binding to reveal the global value (not the tempenv value)
@@ -76,7 +82,10 @@ fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
                             if state.local_var_depth.is_none() {
                                 state.local_var_depth = Some(std::collections::HashMap::new());
                             }
-                            state.local_var_depth.as_mut().unwrap()
+                            state
+                                .local_var_depth
+                                .as_mut()
+                                .unwrap()
                                 .insert(var_name.to_string(), (top_entry.scope_index + 1) as u32);
                         }
                     }
@@ -94,7 +103,11 @@ fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
         if state.fully_unset_locals.is_none() {
             state.fully_unset_locals = Some(std::collections::HashMap::new());
         }
-        state.fully_unset_locals.as_mut().unwrap().insert(var_name.to_string(), 0);
+        state
+            .fully_unset_locals
+            .as_mut()
+            .unwrap()
+            .insert(var_name.to_string(), 0);
         return true;
     }
 
@@ -122,7 +135,10 @@ fn perform_cell_unset(state: &mut InterpreterState, var_name: &str) -> bool {
                     if state.local_var_depth.is_none() {
                         state.local_var_depth = Some(std::collections::HashMap::new());
                     }
-                    state.local_var_depth.as_mut().unwrap()
+                    state
+                        .local_var_depth
+                        .as_mut()
+                        .unwrap()
                         .insert(var_name.to_string(), (j + 1) as u32);
                     found_outer_scope = true;
                     break;
@@ -177,24 +193,22 @@ fn is_quoted_string_index(index_expr: &str) -> bool {
 /// Returns the evaluated numeric index, or None if the expression is a quoted
 /// string that should be treated as an associative array key.
 fn evaluate_array_index(state: &mut InterpreterState, index_expr: &str) -> Option<i64> {
-    use crate::interpreter::types::{InterpreterContext, ExecutionLimits};
     use crate::interpreter::arithmetic::evaluate_arithmetic;
-    use crate::parser::parse_arith_expr;
+    use crate::interpreter::types::{ExecutionLimits, InterpreterContext};
 
     // If the index is a quoted string, it's meant for associative arrays only
     if is_quoted_string_index(index_expr) {
         return None;
     }
 
-    // Try to parse and evaluate as arithmetic expression
+    // Try to parse and evaluate as arithmetic expression using brush-parser
     let limits = ExecutionLimits::default();
     let mut ctx = InterpreterContext::new(state, &limits);
 
-    let (arith_expr, _) = parse_arith_expr(index_expr, 0);
-    match evaluate_arithmetic(&mut ctx, &arith_expr, false, None) {
+    match evaluate_arithmetic(&mut ctx, index_expr, false, None) {
         Ok(result) => Some(result),
         Err(_) => {
-            // If parsing fails, try to parse as simple number
+            // If evaluation fails, try to parse as simple number
             match index_expr.parse::<i64>() {
                 Ok(num) => Some(num),
                 Err(_) => Some(0),
@@ -204,10 +218,7 @@ fn evaluate_array_index(state: &mut InterpreterState, index_expr: &str) -> Optio
 }
 
 /// Handle the unset builtin command
-pub fn handle_unset(
-    state: &mut InterpreterState,
-    args: &[String],
-) -> ExecResult {
+pub fn handle_unset(state: &mut InterpreterState, args: &[String]) -> ExecResult {
     #[derive(Clone, Copy, PartialEq)]
     enum Mode {
         Variable,
@@ -257,7 +268,8 @@ pub fn handle_unset(
             }
 
             // Check if this is an associative array
-            let is_assoc = state.associative_arrays
+            let is_assoc = state
+                .associative_arrays
                 .as_ref()
                 .map_or(false, |a| a.contains(array_name));
 
@@ -272,12 +284,13 @@ pub fn handle_unset(
             let is_indexed_array = is_array(state, array_name);
 
             // Check if variable was explicitly declared as a scalar
-            let is_scalar = state.env.contains_key(array_name)
-                && !is_indexed_array
-                && !is_assoc;
+            let is_scalar = state.env.contains_key(array_name) && !is_indexed_array && !is_assoc;
 
             if is_scalar && mode == Mode::Variable {
-                stderr.push_str(&format!("bash: unset: {}: not an array variable\n", array_name));
+                stderr.push_str(&format!(
+                    "bash: unset: {}: not an array variable\n",
+                    array_name
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -288,7 +301,10 @@ pub fn handle_unset(
             // If index is None, it's a quoted string key - error for indexed arrays
             // Only error if the variable is actually an indexed array
             if index.is_none() && is_indexed_array {
-                stderr.push_str(&format!("bash: unset: {}: not a valid identifier\n", index_expr));
+                stderr.push_str(&format!(
+                    "bash: unset: {}: not a valid identifier\n",
+                    index_expr
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -350,7 +366,10 @@ pub fn handle_unset(
 
         // Check if variable is readonly
         if is_readonly(state, &target_name) {
-            stderr.push_str(&format!("bash: unset: {}: cannot unset: readonly variable\n", target_name));
+            stderr.push_str(&format!(
+                "bash: unset: {}: cannot unset: readonly variable\n",
+                target_name
+            ));
             exit_code = 1;
             continue;
         }
@@ -367,13 +386,16 @@ pub fn handle_unset(
             } else {
                 // Local-unset: variable is local and we're in the same scope
                 // Check if tempenv was accessed before local declaration
-                let temp_env_accessed = state.accessed_temp_env_vars
+                let temp_env_accessed = state
+                    .accessed_temp_env_vars
                     .as_ref()
                     .map_or(false, |s| s.contains(&target_name));
-                let temp_env_mutated = state.mutated_temp_env_vars
+                let temp_env_mutated = state
+                    .mutated_temp_env_vars
                     .as_ref()
                     .map_or(false, |s| s.contains(&target_name));
-                let has_stack = state.local_var_stack
+                let has_stack = state
+                    .local_var_stack
                     .as_ref()
                     .map_or(false, |m| m.contains_key(&target_name));
 
@@ -393,7 +415,8 @@ pub fn handle_unset(
                     state.env.remove(&target_name);
                 }
             }
-        } else if state.fully_unset_locals
+        } else if state
+            .fully_unset_locals
             .as_ref()
             .map_or(false, |m| m.contains_key(&target_name))
         {
@@ -461,7 +484,9 @@ mod tests {
     #[test]
     fn test_handle_temp_env_unset() {
         let mut state = InterpreterState::default();
-        state.env.insert("x".to_string(), "tempenv_value".to_string());
+        state
+            .env
+            .insert("x".to_string(), "tempenv_value".to_string());
 
         // Set up tempenv binding
         let mut binding = HashMap::new();
@@ -507,7 +532,9 @@ mod tests {
         use crate::interpreter::types::LocalVarStackEntry;
 
         let mut state = InterpreterState::default();
-        state.env.insert("x".to_string(), "current_value".to_string());
+        state
+            .env
+            .insert("x".to_string(), "current_value".to_string());
 
         // Set up local var stack
         let entry = LocalVarStackEntry {
@@ -515,7 +542,11 @@ mod tests {
             scope_index: 0,
         };
         state.local_var_stack = Some(HashMap::new());
-        state.local_var_stack.as_mut().unwrap().insert("x".to_string(), vec![entry]);
+        state
+            .local_var_stack
+            .as_mut()
+            .unwrap()
+            .insert("x".to_string(), vec![entry]);
 
         // Cell-unset should pop from stack and restore saved value
         let result = perform_cell_unset(&mut state, "x");
@@ -538,7 +569,11 @@ mod tests {
         let mut state = InterpreterState::default();
         state.env.insert("x".to_string(), "value".to_string());
         state.readonly_vars = Some(std::collections::HashSet::new());
-        state.readonly_vars.as_mut().unwrap().insert("x".to_string());
+        state
+            .readonly_vars
+            .as_mut()
+            .unwrap()
+            .insert("x".to_string());
 
         let result = handle_unset(&mut state, &["x".to_string()]);
         assert_eq!(result.exit_code, 1);
@@ -550,7 +585,9 @@ mod tests {
     #[test]
     fn test_handle_unset_with_tempenv() {
         let mut state = InterpreterState::default();
-        state.env.insert("x".to_string(), "tempenv_value".to_string());
+        state
+            .env
+            .insert("x".to_string(), "tempenv_value".to_string());
 
         // Set up tempenv binding
         let mut binding = HashMap::new();

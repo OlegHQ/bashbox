@@ -150,8 +150,21 @@ pub fn is_array(state: &InterpreterState, name: &str) -> bool {
 
 /// Constants for special variables that are always set
 const ALWAYS_SET_SPECIAL_VARS: &[&str] = &[
-    "?", "$", "#", "_", "-", "0", "PPID", "UID", "EUID", "RANDOM", "SECONDS", "BASH_VERSION", "!",
-    "BASHPID", "LINENO",
+    "?",
+    "$",
+    "#",
+    "_",
+    "-",
+    "0",
+    "PPID",
+    "UID",
+    "EUID",
+    "RANDOM",
+    "SECONDS",
+    "BASH_VERSION",
+    "!",
+    "BASHPID",
+    "LINENO",
 ];
 
 /// Get the value of a variable.
@@ -163,8 +176,22 @@ pub fn get_variable(state: &InterpreterState, name: &str) -> String {
     match name {
         "?" => return state.last_exit_code.to_string(),
         "$" => return std::process::id().to_string(),
-        "#" => return state.env.get("#").map(|s| s.as_str()).unwrap_or("0").to_string(),
-        "@" => return state.env.get("@").map(|s| s.as_str()).unwrap_or("").to_string(),
+        "#" => {
+            return state
+                .env
+                .get("#")
+                .map(|s| s.as_str())
+                .unwrap_or("0")
+                .to_string()
+        }
+        "@" => {
+            return state
+                .env
+                .get("@")
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .to_string()
+        }
         "_" => return state.last_arg.clone(),
         "-" => {
             // $- returns current shell option flags
@@ -193,11 +220,7 @@ pub fn get_variable(state: &InterpreterState, name: &str) -> String {
         }
         "*" => {
             // $* uses first character of IFS as separator
-            let num_params: i32 = state
-                .env
-                .get("#")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let num_params: i32 = state.env.get("#").and_then(|s| s.parse().ok()).unwrap_or(0);
             if num_params == 0 {
                 return String::new();
             }
@@ -206,7 +229,14 @@ pub fn get_variable(state: &InterpreterState, name: &str) -> String {
                 .collect();
             return params.join(get_ifs_separator(&state.env));
         }
-        "0" => return state.env.get("0").map(|s| s.as_str()).unwrap_or("bash").to_string(),
+        "0" => {
+            return state
+                .env
+                .get("0")
+                .map(|s| s.as_str())
+                .unwrap_or("bash")
+                .to_string()
+        }
         "PWD" => return state.env.get("PWD").cloned().unwrap_or_default(),
         "OLDPWD" => return state.env.get("OLDPWD").cloned().unwrap_or_default(),
         "PPID" => return std::os::unix::process::parent_id().to_string(),
@@ -294,7 +324,11 @@ pub fn get_variable(state: &InterpreterState, name: &str) -> String {
             // Get all array elements joined with space
             let elements = get_array_elements(state, &array_name);
             if !elements.is_empty() {
-                return elements.into_iter().map(|(_, v)| v).collect::<Vec<_>>().join(" ");
+                return elements
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect::<Vec<_>>()
+                    .join(" ");
             }
             // If no array elements, treat scalar variable as single-element array
             if let Some(scalar_value) = state.env.get(&array_name) {
@@ -446,11 +480,7 @@ pub fn is_variable_set(state: &InterpreterState, name: &str) -> bool {
 
     // $@ and $* are considered "set" only if there are positional parameters
     if name == "@" || name == "*" {
-        let num_params: i32 = state
-            .env
-            .get("#")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        let num_params: i32 = state.env.get("#").and_then(|s| s.parse().ok()).unwrap_or(0);
         return num_params > 0;
     }
 

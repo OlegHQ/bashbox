@@ -1,6 +1,7 @@
 // src/commands/env/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::{invalid_option, wants_help};
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct EnvCommand;
 
@@ -13,14 +14,15 @@ impl Command for EnvCommand {
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
 
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: env [OPTION]... [NAME=VALUE]... [COMMAND [ARG]...]\n\n\
                  Run a program in a modified environment.\n\n\
                  Options:\n\
                    -i, --ignore-environment  start with an empty environment\n\
                    -u NAME, --unset=NAME     remove NAME from the environment\n\
-                       --help                display this help and exit\n".to_string()
+                       --help                display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -55,7 +57,7 @@ impl Command for EnvCommand {
                     if c != 'i' && c != 'u' {
                         return CommandResult::with_exit_code(
                             String::new(),
-                            format!("env: invalid option -- '{}'\n", c),
+                            invalid_option("env", c.encode_utf8(&mut [0u8; 4])),
                             1,
                         );
                     }
@@ -124,13 +126,17 @@ impl Command for EnvCommand {
         let cmd_rest: Vec<&str> = cmd_args[1..].iter().map(|s| s.as_str()).collect();
 
         // Quote arguments that contain spaces or special characters
-        let quoted_args: Vec<String> = cmd_rest.iter().map(|arg| {
-            if arg.contains(|c: char| c.is_whitespace() || "\"'\\$`!*?[]{}|&;<>()".contains(c)) {
-                format!("'{}'", arg.replace('\'', "'\\''"))
-            } else {
-                arg.to_string()
-            }
-        }).collect();
+        let quoted_args: Vec<String> = cmd_rest
+            .iter()
+            .map(|arg| {
+                if arg.contains(|c: char| c.is_whitespace() || "\"'\\$`!*?[]{}|&;<>()".contains(c))
+                {
+                    format!("'{}'", arg.replace('\'', "'\\''"))
+                } else {
+                    arg.to_string()
+                }
+            })
+            .collect();
 
         let mut parts = vec!["command".to_string(), cmd_name.clone()];
         parts.extend(quoted_args);
@@ -154,7 +160,8 @@ impl Command for EnvCommand {
             ctx.cwd.clone(),
             new_env,
             ctx.fs.clone(),
-        ).await;
+        )
+        .await;
 
         result
     }
@@ -171,16 +178,18 @@ impl Command for PrintenvCommand {
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
 
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: printenv [OPTION]... [VARIABLE]...\n\n\
                  Print all or part of environment.\n\n\
                  Options:\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
-        let vars: Vec<&str> = args.iter()
+        let vars: Vec<&str> = args
+            .iter()
             .filter(|a| !a.starts_with('-'))
             .map(|s| s.as_str())
             .collect();
@@ -223,24 +232,13 @@ impl Command for PrintenvCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
     fn make_ctx(args: Vec<&str>, env: HashMap<String, String>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env,
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        make_ctx_with_env(args, env)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_env_print_all() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
@@ -253,7 +251,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_env_help() {
         let ctx = make_ctx(vec!["--help"], HashMap::new());
         let cmd = EnvCommand;
@@ -263,7 +261,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_printenv_all() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
@@ -274,7 +272,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_printenv_specific() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
@@ -286,7 +284,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_printenv_multiple() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
@@ -297,7 +295,7 @@ mod tests {
         assert_eq!(result.stdout, "bar\nqux\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_printenv_missing() {
         let ctx = make_ctx(vec!["NONEXISTENT"], HashMap::new());
         let cmd = PrintenvCommand;
@@ -305,7 +303,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_printenv_help() {
         let ctx = make_ctx(vec!["--help"], HashMap::new());
         let cmd = PrintenvCommand;

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct TrueCommand;
 
@@ -30,9 +30,9 @@ impl Command for FalseCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx() -> CommandContext {
         CommandContext {
@@ -46,7 +46,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_true_returns_zero() {
         let cmd = TrueCommand;
         let result = cmd.execute(create_ctx()).await;
@@ -55,7 +55,7 @@ mod tests {
         assert!(result.stderr.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_false_returns_one() {
         let cmd = FalseCommand;
         let result = cmd.execute(create_ctx()).await;

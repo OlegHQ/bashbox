@@ -224,7 +224,9 @@ mod tests {
     fn test_mapfile_origin() {
         let mut state = make_state();
         // First populate some elements
-        state.env.insert("arr_0".to_string(), "existing".to_string());
+        state
+            .env
+            .insert("arr_0".to_string(), "existing".to_string());
         let result = handle_mapfile(
             &mut state,
             &["-O".to_string(), "2".to_string(), "arr".to_string()],

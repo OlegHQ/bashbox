@@ -1,7 +1,7 @@
 /// Parsed URL components
 struct ParsedUrl {
     origin: String,   // e.g., "https://api.example.com" or "http://localhost:3000"
-    pathname: String,  // e.g., "/v1/users" or "/"
+    pathname: String, // e.g., "/v1/users" or "/"
 }
 
 /// Parse a URL string into components. Returns None if invalid.

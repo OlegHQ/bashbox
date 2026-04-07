@@ -4,9 +4,9 @@
 //! - type [-afptP] name...
 //! - command -v/-V name...
 
-use std::collections::HashMap;
 use crate::interpreter::helpers::shell_constants::{SHELL_BUILTINS, SHELL_KEYWORDS};
 use crate::interpreter::types::{ExecResult, InterpreterState};
+use std::collections::HashMap;
 
 /// Context needed for type command operations
 pub struct TypeCommandContext<'a> {
@@ -26,10 +26,10 @@ where
     G: Fn(&str) -> Vec<String>,
 {
     // Parse options
-    let mut type_only = false;      // -t flag
-    let mut path_only = false;      // -p flag
+    let mut type_only = false; // -t flag
+    let mut path_only = false; // -p flag
     let mut force_path_search = false; // -P flag
-    let mut show_all = false;       // -a flag
+    let mut show_all = false; // -a flag
     let mut suppress_functions = false; // -f flag
     let mut names: Vec<&str> = Vec::new();
 
@@ -245,12 +245,7 @@ mod tests {
         let state = InterpreterState::default();
         let ctx = TypeCommandContext { state: &state };
 
-        let result = handle_type(
-            &ctx,
-            &["echo".to_string()],
-            |_| None,
-            |_| vec![],
-        );
+        let result = handle_type(&ctx, &["echo".to_string()], |_| None, |_| vec![]);
 
         assert!(result.stdout.contains("echo is a shell builtin"));
         assert_eq!(result.exit_code, 0);
@@ -261,12 +256,7 @@ mod tests {
         let state = InterpreterState::default();
         let ctx = TypeCommandContext { state: &state };
 
-        let result = handle_type(
-            &ctx,
-            &["if".to_string()],
-            |_| None,
-            |_| vec![],
-        );
+        let result = handle_type(&ctx, &["if".to_string()], |_| None, |_| vec![]);
 
         assert!(result.stdout.contains("if is a shell keyword"));
         assert_eq!(result.exit_code, 0);

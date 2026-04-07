@@ -1,21 +1,23 @@
 // src/commands/nl/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option_line;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct NlCommand;
 
 /// Body numbering style
 enum BodyStyle {
-    All,       // a: number all lines
-    NonEmpty,  // t: number non-empty lines only (default)
-    None,      // n: number no lines
+    All,      // a: number all lines
+    NonEmpty, // t: number non-empty lines only (default)
+    None,     // n: number no lines
 }
 
 /// Number format
 enum NumberFormat {
-    LeftJustified,   // ln
-    RightSpaces,     // rn (default)
-    RightZeros,      // rz
+    LeftJustified, // ln
+    RightSpaces,   // rn (default)
+    RightZeros,    // rz
 }
 
 struct NlOptions {
@@ -90,25 +92,25 @@ fn parse_options(args: &[String]) -> Result<(NlOptions, Vec<String>), String> {
                     };
                 }
                 "w" => {
-                    opts.width = value.parse::<usize>().map_err(|_| {
-                        format!("nl: invalid line number field width: '{}'", value)
-                    })?;
+                    opts.width = value
+                        .parse::<usize>()
+                        .map_err(|_| format!("nl: invalid line number field width: '{}'", value))?;
                 }
                 "s" => {
                     opts.separator = value;
                 }
                 "v" => {
-                    opts.start = value.parse::<i64>().map_err(|_| {
-                        format!("nl: invalid starting line number: '{}'", value)
-                    })?;
+                    opts.start = value
+                        .parse::<i64>()
+                        .map_err(|_| format!("nl: invalid starting line number: '{}'", value))?;
                 }
                 "i" => {
-                    opts.increment = value.parse::<i64>().map_err(|_| {
-                        format!("nl: invalid line number increment: '{}'", value)
-                    })?;
+                    opts.increment = value
+                        .parse::<i64>()
+                        .map_err(|_| format!("nl: invalid line number increment: '{}'", value))?;
                 }
                 _ => {
-                    return Err(format!("nl: invalid option -- '{}'", flag));
+                    return Err(invalid_option_line("nl", flag));
                 }
             }
         } else {
@@ -167,10 +169,7 @@ impl Command for NlCommand {
                     match ctx.fs.read_file(&path).await {
                         Ok(content) => inputs.push(content),
                         Err(_) => {
-                            return CommandResult::error(format!(
-                                "nl: {}: No such file or directory\n",
-                                file
-                            ));
+                            return CommandResult::error(no_such_file("nl", file));
                         }
                     }
                 }
@@ -220,32 +219,14 @@ impl Command for NlCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::commands::test_utils::*;
     use crate::fs::types::FileSystem;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &str)>) -> CommandContext {
+        make_ctx_with_stdin_and_files(args, stdin, files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_stdin() {
         let ctx = make_ctx(vec!["-ba"], "hello\nworld\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -256,7 +237,7 @@ mod tests {
         assert!(result.stdout.contains("world"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_file() {
         let ctx = make_ctx(
             vec!["-ba", "/test.txt"],
@@ -272,7 +253,7 @@ mod tests {
         assert!(result.stdout.contains("beta"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_skip_empty_default() {
         // Default -bt: skip empty lines
         let ctx = make_ctx(vec![], "a\n\nb\n", vec![]).await;
@@ -290,7 +271,7 @@ mod tests {
         assert!(lines[2].contains("b"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_all_lines_ba() {
         let ctx = make_ctx(vec!["-ba"], "a\n\nb\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -302,7 +283,7 @@ mod tests {
         assert!(lines[2].contains("3"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_no_lines_bn() {
         let ctx = make_ctx(vec!["-bn"], "a\nb\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -314,7 +295,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_left_justify_ln() {
         let ctx = make_ctx(vec!["-ba", "-nln"], "a\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -323,7 +304,7 @@ mod tests {
         assert!(result.stdout.starts_with("1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_right_zeros_rz() {
         let ctx = make_ctx(vec!["-ba", "-nrz"], "a\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -331,7 +312,7 @@ mod tests {
         assert!(result.stdout.contains("000001"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_width() {
         let ctx = make_ctx(vec!["-ba", "-w3"], "a\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -340,7 +321,7 @@ mod tests {
         assert!(result.stdout.starts_with("  1\t"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_separator() {
         let ctx = make_ctx(vec!["-ba", "-s:"], "a\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -348,7 +329,7 @@ mod tests {
         assert!(result.stdout.contains(":a"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_start_number() {
         let ctx = make_ctx(vec!["-ba", "-v10"], "a\nb\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -357,7 +338,7 @@ mod tests {
         assert!(result.stdout.contains("11"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_increment() {
         let ctx = make_ctx(vec!["-ba", "-i5"], "a\nb\nc\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -368,7 +349,7 @@ mod tests {
         assert!(lines[2].contains("11"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_empty_input() {
         let ctx = make_ctx(vec![], "", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -376,20 +357,21 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_file_not_found() {
         let ctx = make_ctx(vec!["/nonexistent.txt"], "", vec![]).await;
         let result = NlCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_multiple_files() {
         let ctx = make_ctx(
             vec!["/a.txt", "/b.txt"],
             "",
             vec![("/a.txt", "one\ntwo\n"), ("/b.txt", "three\nfour\n")],
-        ).await;
+        )
+        .await;
         let result = NlCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("1"));
@@ -402,13 +384,14 @@ mod tests {
         assert!(result.stdout.contains("four"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_continues_numbering_across_files() {
         let ctx = make_ctx(
             vec!["-v10", "/a.txt", "/b.txt"],
             "",
             vec![("/a.txt", "one\n"), ("/b.txt", "two\n")],
-        ).await;
+        )
+        .await;
         let result = NlCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("10"));
@@ -417,7 +400,7 @@ mod tests {
         assert!(result.stdout.contains("two"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_custom_separator() {
         let ctx = make_ctx(vec!["-ba", "-s: "], "a\nb\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -426,9 +409,14 @@ mod tests {
         assert!(result.stdout.contains(": b"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_combined_options() {
-        let ctx = make_ctx(vec!["-ba", "-nrz", "-w4", "-s|", "-v100", "-i10"], "a\nb\nc\n", vec![]).await;
+        let ctx = make_ctx(
+            vec!["-ba", "-nrz", "-w4", "-s|", "-v100", "-i10"],
+            "a\nb\nc\n",
+            vec![],
+        )
+        .await;
         let result = NlCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("0100|a"));
@@ -436,7 +424,7 @@ mod tests {
         assert!(result.stdout.contains("0120|c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_single_line_without_newline() {
         let ctx = make_ctx(vec![], "hello", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -445,7 +433,7 @@ mod tests {
         assert!(result.stdout.contains("hello"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_whitespace_only_lines_default() {
         let ctx = make_ctx(vec![], "a\n   \nb\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -462,7 +450,7 @@ mod tests {
         assert!(lines[2].contains("b"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_negative_start_number() {
         let ctx = make_ctx(vec!["-ba", "-v-1"], "a\nb\nc\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -472,7 +460,7 @@ mod tests {
         assert!(result.stdout.contains("1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_error_invalid_body_style() {
         let ctx = make_ctx(vec!["-bx"], "x", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -480,7 +468,7 @@ mod tests {
         assert!(result.stderr.contains("invalid body numbering style"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_error_invalid_number_format() {
         let ctx = make_ctx(vec!["-nxx"], "x", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -488,7 +476,7 @@ mod tests {
         assert!(result.stderr.contains("invalid line numbering format"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_error_invalid_width() {
         let ctx = make_ctx(vec!["-wabc"], "x", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -496,7 +484,7 @@ mod tests {
         assert!(result.stderr.contains("invalid line number field width"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_error_invalid_start() {
         let ctx = make_ctx(vec!["-vabc"], "x", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -504,7 +492,7 @@ mod tests {
         assert!(result.stderr.contains("invalid starting line number"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_error_invalid_increment() {
         let ctx = make_ctx(vec!["-iabc"], "x", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -512,7 +500,7 @@ mod tests {
         assert!(result.stderr.contains("invalid line number increment"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_help_contains_usage() {
         let ctx = make_ctx(vec!["--help"], "", vec![]).await;
         let result = NlCommand.execute(ctx).await;
@@ -521,7 +509,7 @@ mod tests {
         assert!(result.stdout.contains("number"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_nl_dash_reads_stdin() {
         let ctx = make_ctx(vec!["-ba", "-"], "hello\nworld\n", vec![]).await;
         let result = NlCommand.execute(ctx).await;

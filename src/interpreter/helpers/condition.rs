@@ -16,7 +16,11 @@ pub struct ConditionResult {
 impl ConditionResult {
     /// Create a new condition result.
     pub fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
     }
 
     /// Create a successful condition result (exit code 0).
@@ -26,7 +30,10 @@ impl ConditionResult {
 
     /// Create a failed condition result (exit code 1).
     pub fn failure() -> Self {
-        Self { exit_code: 1, ..Default::default() }
+        Self {
+            exit_code: 1,
+            ..Default::default()
+        }
     }
 }
 
@@ -103,14 +110,11 @@ mod tests {
         let statements: Vec<i32> = vec![1];
         let mut was_in_condition = false;
 
-        let result: Result<ConditionResult, ()> = execute_condition(
-            &mut state,
-            &statements,
-            |s, _| {
+        let result: Result<ConditionResult, ()> =
+            execute_condition(&mut state, &statements, |s, _| {
                 was_in_condition = s.in_condition;
                 Ok(ConditionResult::success())
-            },
-        );
+            });
 
         assert!(result.is_ok());
         assert!(was_in_condition);
@@ -124,11 +128,8 @@ mod tests {
 
         let statements: Vec<i32> = vec![1];
 
-        let result: Result<ConditionResult, &str> = execute_condition(
-            &mut state,
-            &statements,
-            |_, _| Err("test error"),
-        );
+        let result: Result<ConditionResult, &str> =
+            execute_condition(&mut state, &statements, |_, _| Err("test error"));
 
         assert!(result.is_err());
         assert!(!state.in_condition);
@@ -140,17 +141,14 @@ mod tests {
 
         let statements: Vec<i32> = vec![1, 2, 3];
 
-        let result: Result<ConditionResult, ()> = execute_condition(
-            &mut state,
-            &statements,
-            |_, stmt| {
+        let result: Result<ConditionResult, ()> =
+            execute_condition(&mut state, &statements, |_, stmt| {
                 Ok(ConditionResult::new(
                     format!("out{}", stmt),
                     format!("err{}", stmt),
                     *stmt,
                 ))
-            },
-        );
+            });
 
         let res = result.unwrap();
         assert_eq!(res.stdout, "out1out2out3");
@@ -165,11 +163,9 @@ mod tests {
 
         let statements: Vec<i32> = vec![1];
 
-        let _: Result<ConditionResult, ()> = execute_condition(
-            &mut state,
-            &statements,
-            |_, _| Ok(ConditionResult::success()),
-        );
+        let _: Result<ConditionResult, ()> = execute_condition(&mut state, &statements, |_, _| {
+            Ok(ConditionResult::success())
+        });
 
         assert!(state.in_condition);
     }
@@ -180,11 +176,10 @@ mod tests {
 
         let statements: Vec<i32> = vec![];
 
-        let result: Result<ConditionResult, ()> = execute_condition(
-            &mut state,
-            &statements,
-            |_, _| Ok(ConditionResult::success()),
-        );
+        let result: Result<ConditionResult, ()> =
+            execute_condition(&mut state, &statements, |_, _| {
+                Ok(ConditionResult::success())
+            });
 
         let res = result.unwrap();
         assert!(res.stdout.is_empty());

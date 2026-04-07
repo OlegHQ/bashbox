@@ -1,6 +1,8 @@
 // src/commands/cut/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct CutCommand;
 
@@ -9,8 +11,8 @@ pub struct CutCommand;
 enum RangeSpec {
     Single(usize),
     Range(usize, usize),
-    FromStart(usize),   // -M  (1 to M)
-    ToEnd(usize),       // N-  (N to end)
+    FromStart(usize), // -M  (1 to M)
+    ToEnd(usize),     // N-  (N to end)
 }
 
 /// Parse a LIST string like "1,3-5,7-" into a vector of RangeSpec.
@@ -28,39 +30,39 @@ fn parse_list(list: &str) -> Result<Vec<RangeSpec>, String> {
                 return Err("cut: invalid range with no endpoint: -".to_string());
             } else if left.is_empty() {
                 // -M
-                let m: usize = right.parse().map_err(|_| {
-                    format!("cut: invalid range: {}", part)
-                })?;
+                let m: usize = right
+                    .parse()
+                    .map_err(|_| format!("cut: invalid range: {}", part))?;
                 if m == 0 {
                     return Err("cut: fields and positions are numbered from 1".to_string());
                 }
                 specs.push(RangeSpec::FromStart(m));
             } else if right.is_empty() {
                 // N-
-                let n: usize = left.parse().map_err(|_| {
-                    format!("cut: invalid range: {}", part)
-                })?;
+                let n: usize = left
+                    .parse()
+                    .map_err(|_| format!("cut: invalid range: {}", part))?;
                 if n == 0 {
                     return Err("cut: fields and positions are numbered from 1".to_string());
                 }
                 specs.push(RangeSpec::ToEnd(n));
             } else {
                 // N-M
-                let n: usize = left.parse().map_err(|_| {
-                    format!("cut: invalid range: {}", part)
-                })?;
-                let m: usize = right.parse().map_err(|_| {
-                    format!("cut: invalid range: {}", part)
-                })?;
+                let n: usize = left
+                    .parse()
+                    .map_err(|_| format!("cut: invalid range: {}", part))?;
+                let m: usize = right
+                    .parse()
+                    .map_err(|_| format!("cut: invalid range: {}", part))?;
                 if n == 0 || m == 0 {
                     return Err("cut: fields and positions are numbered from 1".to_string());
                 }
                 specs.push(RangeSpec::Range(n, m));
             }
         } else {
-            let n: usize = part.parse().map_err(|_| {
-                format!("cut: invalid field value: {}", part)
-            })?;
+            let n: usize = part
+                .parse()
+                .map_err(|_| format!("cut: invalid field value: {}", part))?;
             if n == 0 {
                 return Err("cut: fields and positions are numbered from 1".to_string());
             }
@@ -116,7 +118,7 @@ impl Command for CutCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: cut OPTION... [FILE]...\n\n\
                  Print selected parts of lines from each FILE to standard output.\n\n\
@@ -198,10 +200,7 @@ impl Command for CutCommand {
             match ctx.fs.read_file(&path).await {
                 Ok(c) => c,
                 Err(_) => {
-                    return CommandResult::error(format!(
-                        "cut: {}: No such file or directory\n",
-                        files[0]
-                    ));
+                    return CommandResult::error(no_such_file("cut", &files[0]));
                 }
             }
         };
@@ -221,8 +220,7 @@ impl Command for CutCommand {
             for line in &lines {
                 let chars: Vec<char> = line.chars().collect();
                 let indices = expand_indices(&specs, chars.len());
-                let selected: String =
-                    indices.iter().filter_map(|&i| chars.get(i - 1)).collect();
+                let selected: String = indices.iter().filter_map(|&i| chars.get(i - 1)).collect();
                 output.push_str(&selected);
                 output.push('\n');
             }
@@ -257,197 +255,119 @@ impl Command for CutCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::commands::test_utils::*;
     use crate::fs::types::FileSystem;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &str)>) -> CommandContext {
+        make_ctx_with_stdin_and_files(args, stdin, files).await
     }
 
-    async fn make_ctx_with_files(
-        args: Vec<&str>,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        make_ctx(args, "", files).await
+    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
+        crate::commands::test_utils::make_ctx_with_files(args, files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_first_field_colon() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f1"],
-            "root:x:0:0\nuser:x:1000:1000\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f1"], "root:x:0:0\nuser:x:1000:1000\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "root\nuser\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_multiple_fields() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f1,3"],
-            "a:b:c:d\n1:2:3:4\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f1,3"], "a:b:c:d\n1:2:3:4\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a:c\n1:3\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_field_range() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f2-4"],
-            "a:b:c:d:e\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f2-4"], "a:b:c:d:e\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "b:c:d\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_csv_comma() {
-        let ctx = make_ctx(
-            vec!["-d,", "-f2"],
-            "name,age,city\njohn,30,nyc\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d,", "-f2"], "name,age,city\njohn,30,nyc\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "age\n30\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_tab_default() {
-        let ctx = make_ctx(
-            vec!["-f1"],
-            "a\tb\tc\n1\t2\t3\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-f1"], "a\tb\tc\n1\t2\t3\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\n1\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_characters() {
-        let ctx = make_ctx(
-            vec!["-c1-5"],
-            "hello world\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-c1-5"], "hello world\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "hello\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_specific_chars() {
-        let ctx = make_ctx(
-            vec!["-c1,3,5"],
-            "abcdefg\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-c1,3,5"], "abcdefg\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "ace\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_stdin() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f1"],
-            "a:b:c\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f1"], "a:b:c\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_open_range() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f3-"],
-            "a:b:c:d:e\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f3-"], "a:b:c:d:e\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "c:d:e\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_file_not_found() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f1", "/nonexistent.txt"],
-            "",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f1", "/nonexistent.txt"], "", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_no_field_or_char() {
-        let ctx = make_ctx(
-            vec![],
-            "hello\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec![], "hello\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_only_delimited_s() {
-        let ctx = make_ctx(
-            vec!["-d:", "-f1", "-s"],
-            "a:b\nno-delim\nc:d\n",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx(vec!["-d:", "-f1", "-s"], "a:b\nno-delim\nc:d\n", vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_from_file() {
         let ctx = make_ctx_with_files(
             vec!["-d:", "-f1", "/test/passwd.txt"],
-            vec![("/test/passwd.txt", "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n")],
+            vec![(
+                "/test/passwd.txt",
+                "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n",
+            )],
         )
         .await;
         let result = CutCommand.execute(ctx).await;
@@ -455,7 +375,7 @@ mod tests {
         assert_eq!(result.stdout, "root\nuser\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_csv_multiple_fields() {
         let ctx = make_ctx_with_files(
             vec!["-d,", "-f1,2", "/test/csv.txt"],
@@ -467,11 +387,14 @@ mod tests {
         assert_eq!(result.stdout, "name,age\nJohn,25\nJane,30\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_field_range_1_3() {
         let ctx = make_ctx_with_files(
             vec!["-d:", "-f1-3", "/test/passwd.txt"],
-            vec![("/test/passwd.txt", "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n")],
+            vec![(
+                "/test/passwd.txt",
+                "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n",
+            )],
         )
         .await;
         let result = CutCommand.execute(ctx).await;
@@ -479,32 +402,37 @@ mod tests {
         assert_eq!(result.stdout, "root:x:0\nuser:x:1000\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_field_from_end() {
         let ctx = make_ctx_with_files(
             vec!["-d:", "-f5-", "/test/passwd.txt"],
-            vec![("/test/passwd.txt", "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n")],
+            vec![(
+                "/test/passwd.txt",
+                "root:x:0:0:root:/root:/bin/bash\nuser:x:1000:1000:User:/home/user:/bin/zsh\n",
+            )],
         )
         .await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "root:/root:/bin/bash\nUser:/home/user:/bin/zsh\n");
+        assert_eq!(
+            result.stdout,
+            "root:/root:/bin/bash\nUser:/home/user:/bin/zsh\n"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_error_message() {
-        let ctx = make_ctx_with_files(
-            vec!["-f1", "/test/nonexistent.txt"],
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx_with_files(vec!["-f1", "/test/nonexistent.txt"], vec![]).await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.stdout, "");
-        assert_eq!(result.stderr, "cut: /test/nonexistent.txt: No such file or directory\n");
+        assert_eq!(
+            result.stderr,
+            "cut: /test/nonexistent.txt: No such file or directory\n"
+        );
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cut_error_no_spec() {
         let ctx = make_ctx_with_files(
             vec!["/test/text.txt"],
@@ -513,7 +441,10 @@ mod tests {
         .await;
         let result = CutCommand.execute(ctx).await;
         assert_eq!(result.stdout, "");
-        assert_eq!(result.stderr, "cut: you must specify a list of bytes, characters, or fields\n");
+        assert_eq!(
+            result.stderr,
+            "cut: you must specify a list of bytes, characters, or fields\n"
+        );
         assert_eq!(result.exit_code, 1);
     }
 }

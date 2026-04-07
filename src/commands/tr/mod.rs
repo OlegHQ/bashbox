@@ -1,6 +1,7 @@
 // src/commands/tr/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 use std::collections::HashSet;
 
 pub struct TrCommand;
@@ -54,7 +55,7 @@ impl Command for TrCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: tr [OPTION]... SET1 [SET2]\n\n\
                  Translate, squeeze, or delete characters from stdin.\n\n\
@@ -87,15 +88,11 @@ impl Command for TrCommand {
         }
 
         if sets.is_empty() {
-            return CommandResult::error(
-                "tr: missing operand\n".to_string(),
-            );
+            return CommandResult::error("tr: missing operand\n".to_string());
         }
 
         if sets.len() < 2 && !delete && !squeeze {
-            return CommandResult::error(
-                "tr: missing operand after the first SET\n".to_string(),
-            );
+            return CommandResult::error("tr: missing operand after the first SET\n".to_string());
         }
 
         let set1_chars = parse_set(&sets[0]);
@@ -196,24 +193,14 @@ impl Command for TrCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::test_utils::*;
     use crate::fs::InMemoryFs;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
     fn make_ctx(args: Vec<&str>, stdin: &str) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        make_ctx_with_stdin(args, stdin)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_lower_to_upper() {
         let ctx = make_ctx(vec!["a-z", "A-Z"], "hello world\n");
         let result = TrCommand.execute(ctx).await;
@@ -221,7 +208,7 @@ mod tests {
         assert_eq!(result.stdout, "HELLO WORLD\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_upper_to_lower() {
         let ctx = make_ctx(vec!["A-Z", "a-z"], "HELLO WORLD\n");
         let result = TrCommand.execute(ctx).await;
@@ -229,7 +216,7 @@ mod tests {
         assert_eq!(result.stdout, "hello world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_delete() {
         let ctx = make_ctx(vec!["-d", "aeiou"], "hello world\n");
         let result = TrCommand.execute(ctx).await;
@@ -237,7 +224,7 @@ mod tests {
         assert_eq!(result.stdout, "hll wrld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_delete_newlines() {
         let ctx = make_ctx(vec!["-d", "\\n"], "a\nb\nc\n");
         let result = TrCommand.execute(ctx).await;
@@ -245,7 +232,7 @@ mod tests {
         assert_eq!(result.stdout, "abc");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_squeeze() {
         let ctx = make_ctx(vec!["-s", "a"], "aaabbbccc\n");
         let result = TrCommand.execute(ctx).await;
@@ -253,7 +240,7 @@ mod tests {
         assert_eq!(result.stdout, "abbbccc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_translate_chars() {
         let ctx = make_ctx(vec!["abc", "xyz"], "aabbcc\n");
         let result = TrCommand.execute(ctx).await;
@@ -261,7 +248,7 @@ mod tests {
         assert_eq!(result.stdout, "xxyyzz\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_space_to_underscore() {
         let ctx = make_ctx(vec![" ", "_"], "hello world\n");
         let result = TrCommand.execute(ctx).await;
@@ -269,7 +256,7 @@ mod tests {
         assert_eq!(result.stdout, "hello_world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_char_range() {
         let ctx = make_ctx(vec!["0-9", "X"], "abc123def456\n");
         let result = TrCommand.execute(ctx).await;
@@ -277,7 +264,7 @@ mod tests {
         assert_eq!(result.stdout, "abcXXXdefXXX\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_delete_digits() {
         let ctx = make_ctx(vec!["-d", "0-9"], "abc123def456\n");
         let result = TrCommand.execute(ctx).await;
@@ -285,21 +272,21 @@ mod tests {
         assert_eq!(result.stdout, "abcdef\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_missing_operand() {
         let ctx = make_ctx(vec![], "hello\n");
         let result = TrCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_missing_set2() {
         let ctx = make_ctx(vec!["abc"], "hello\n");
         let result = TrCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_shorter_set2() {
         let ctx = make_ctx(vec!["abc", "x"], "aabbcc\n");
         let result = TrCommand.execute(ctx).await;
@@ -307,7 +294,7 @@ mod tests {
         assert_eq!(result.stdout, "xxxxxx\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_complement_delete() {
         let ctx = make_ctx(vec!["-cd", "a-z\\n"], "Hello123World\n");
         let result = TrCommand.execute(ctx).await;
@@ -315,7 +302,7 @@ mod tests {
         assert_eq!(result.stdout, "elloorld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_squeeze_spaces() {
         let ctx = make_ctx(vec!["-s", " "], "hello    world\n");
         let result = TrCommand.execute(ctx).await;
@@ -323,7 +310,7 @@ mod tests {
         assert_eq!(result.stdout, "hello world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_number_range() {
         let ctx = make_ctx(vec!["1-5", "a-e"], "12345\n");
         let result = TrCommand.execute(ctx).await;
@@ -331,7 +318,7 @@ mod tests {
         assert_eq!(result.stdout, "abcde\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tr_help() {
         let ctx = make_ctx(vec!["--help"], "");
         let result = TrCommand.execute(ctx).await;

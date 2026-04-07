@@ -1,7 +1,8 @@
 // src/commands/rm/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::RmOptions;
+use async_trait::async_trait;
 
 pub struct RmCommand;
 
@@ -12,7 +13,7 @@ impl Command for RmCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: rm [OPTION]... [FILE]...\n\n\
                  Remove (unlink) the FILE(s).\n\n\
@@ -20,7 +21,8 @@ impl Command for RmCommand {
                    -f, --force      ignore nonexistent files and arguments\n\
                    -r, -R, --recursive  remove directories and their contents recursively\n\
                    -v, --verbose    explain what is being done\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -68,7 +70,10 @@ impl Command for RmCommand {
                 }
                 Err(_) => {
                     if !force {
-                        stderr.push_str(&format!("rm: cannot remove '{}': No such file or directory\n", path));
+                        stderr.push_str(&format!(
+                            "rm: cannot remove '{}': No such file or directory\n",
+                            path
+                        ));
                         exit_code = 1;
                     }
                     continue;
@@ -86,7 +91,10 @@ impl Command for RmCommand {
                     if !force {
                         let msg = format!("{:?}", e);
                         if msg.contains("NotEmpty") {
-                            stderr.push_str(&format!("rm: cannot remove '{}': Directory not empty\n", path));
+                            stderr.push_str(&format!(
+                                "rm: cannot remove '{}': Directory not empty\n",
+                                path
+                            ));
                         } else {
                             stderr.push_str(&format!("rm: cannot remove '{}': {}\n", path, msg));
                         }
@@ -103,27 +111,10 @@ impl Command for RmCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_file() {
         let ctx = make_ctx_with_files(vec!["/test.txt"], vec![("/test.txt", "content")]).await;
         let fs = ctx.fs.clone();
@@ -133,7 +124,7 @@ mod tests {
         assert!(!fs.exists("/test.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_nonexistent() {
         let ctx = make_ctx_with_files(vec!["/nonexistent.txt"], vec![]).await;
         let cmd = RmCommand;
@@ -142,7 +133,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_force_nonexistent() {
         let ctx = make_ctx_with_files(vec!["-f", "/nonexistent.txt"], vec![]).await;
         let cmd = RmCommand;
@@ -150,10 +141,12 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_directory_without_r() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/testdir".to_string()],
             stdin: String::new(),
@@ -169,11 +162,15 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_recursive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
-        fs.write_file("/testdir/file.txt", b"content").await.unwrap();
+        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.write_file("/testdir/file.txt", b"content")
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["-r".to_string(), "/testdir".to_string()],
             stdin: String::new(),

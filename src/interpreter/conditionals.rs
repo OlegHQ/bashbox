@@ -10,6 +10,8 @@
 
 use crate::interpreter::expansion::pattern::pattern_to_regex;
 use crate::interpreter::types::InterpreterState;
+use crate::shell::pattern_utils;
+use brush_parser::ast as bast;
 use regex_lite::Regex;
 
 /// Match a value against a glob pattern.
@@ -26,7 +28,10 @@ pub fn match_pattern(value: &str, pattern: &str, nocasematch: bool, extglob: boo
             if nocasematch {
                 // For case-insensitive, convert both to lowercase
                 let lower_value = value.to_lowercase();
-                let lower_pattern = format!("^{}$", pattern_to_regex(&pattern.to_lowercase(), true, extglob));
+                let lower_pattern = format!(
+                    "^{}$",
+                    pattern_to_regex(&pattern.to_lowercase(), true, extglob)
+                );
                 match Regex::new(&lower_pattern) {
                     Ok(lower_re) => lower_re.is_match(&lower_value),
                     Err(_) => false,
@@ -103,7 +108,10 @@ pub fn parse_numeric(value: &str) -> i64 {
         (false, value)
     };
 
-    let result = if let Some(caps) = Regex::new(r"^(\d+)#([a-zA-Z0-9@_]+)$").ok().and_then(|re| re.captures(value)) {
+    let result = if let Some(caps) = Regex::new(r"^(\d+)#([a-zA-Z0-9@_]+)$")
+        .ok()
+        .and_then(|re| re.captures(value))
+    {
         // Base-N syntax: base#value
         let base: u32 = caps.get(1).unwrap().as_str().parse().unwrap_or(0);
         let digits = caps.get(2).unwrap().as_str();
@@ -115,7 +123,10 @@ pub fn parse_numeric(value: &str) -> i64 {
     } else if value.starts_with("0x") || value.starts_with("0X") {
         // Hex: 0x or 0X
         i64::from_str_radix(&value[2..], 16).unwrap_or(0)
-    } else if value.starts_with('0') && value.len() > 1 && value.chars().skip(1).all(|c| c >= '0' && c <= '7') {
+    } else if value.starts_with('0')
+        && value.len() > 1
+        && value.chars().skip(1).all(|c| c >= '0' && c <= '7')
+    {
         // Octal: starts with 0 followed by digits (0-7)
         i64::from_str_radix(&value[1..], 8).unwrap_or(0)
     } else {
@@ -123,7 +134,11 @@ pub fn parse_numeric(value: &str) -> i64 {
         value.parse::<i64>().unwrap_or(0)
     };
 
-    if negative { -result } else { result }
+    if negative {
+        -result
+    } else {
+        result
+    }
 }
 
 /// Result of parsing a decimal number.
@@ -140,7 +155,10 @@ pub struct ParseNumericResult {
 pub fn parse_numeric_decimal(value: &str) -> ParseNumericResult {
     let value = value.trim();
     if value.is_empty() {
-        return ParseNumericResult { value: 0, valid: true };
+        return ParseNumericResult {
+            value: 0,
+            valid: true,
+        };
     }
 
     // Handle negative numbers
@@ -154,7 +172,10 @@ pub fn parse_numeric_decimal(value: &str) -> ParseNumericResult {
 
     // Check if it's a valid decimal number (only digits)
     if !value.chars().all(|c| c.is_ascii_digit()) {
-        return ParseNumericResult { value: 0, valid: false };
+        return ParseNumericResult {
+            value: 0,
+            valid: false,
+        };
     }
 
     // Always parse as decimal (base 10)
@@ -163,7 +184,10 @@ pub fn parse_numeric_decimal(value: &str) -> ParseNumericResult {
             value: if negative { -n } else { n },
             valid: true,
         },
-        Err(_) => ParseNumericResult { value: 0, valid: false },
+        Err(_) => ParseNumericResult {
+            value: 0,
+            valid: false,
+        },
     }
 }
 
@@ -245,7 +269,7 @@ fn convert_posix_char_class(chars: &[char], start_index: usize) -> (String, usiz
             let rest: String = chars[i + 2..].iter().collect();
             if let Some(end_pos) = rest.find(":]") {
                 let class_name: String = chars[i + 2..i + 2 + end_pos].iter().collect();
-                class_content.push_str(&posix_class_to_regex(&class_name));
+                class_content.push_str(pattern_utils::posix_class_to_regex(&class_name));
                 i = i + 2 + end_pos + 2;
                 continue;
             }
@@ -301,27 +325,6 @@ fn convert_posix_char_class(chars: &[char], start_index: usize) -> (String, usiz
     (result, i)
 }
 
-/// Convert POSIX character class name to regex equivalent.
-fn posix_class_to_regex(class_name: &str) -> String {
-    match class_name {
-        "alnum" => "a-zA-Z0-9".to_string(),
-        "alpha" => "a-zA-Z".to_string(),
-        "ascii" => "\\x00-\\x7F".to_string(),
-        "blank" => " \\t".to_string(),
-        "cntrl" => "\\x00-\\x1F\\x7F".to_string(),
-        "digit" => "0-9".to_string(),
-        "graph" => "!-~".to_string(),
-        "lower" => "a-z".to_string(),
-        "print" => " -~".to_string(),
-        "punct" => "!-/:-@\\[-`{-~".to_string(),
-        "space" => " \\t\\n\\r\\f\\v".to_string(),
-        "upper" => "A-Z".to_string(),
-        "word" => "a-zA-Z0-9_".to_string(),
-        "xdigit" => "0-9A-Fa-f".to_string(),
-        _ => String::new(),
-    }
-}
-
 /// Compute the fixed length of a pattern, if it has one.
 /// Returns None if the pattern has variable length (contains *, +, etc.).
 /// Used to optimize !() extglob patterns.
@@ -339,13 +342,13 @@ pub fn compute_pattern_length(pattern: &str, extglob: bool) -> Option<usize> {
             && i + 1 < chars.len()
             && chars[i + 1] == '('
         {
-            let close_idx = find_matching_paren(&chars, i + 1);
-            if close_idx.is_some() {
-                let close = close_idx.unwrap();
+            let close_raw = pattern_utils::find_matching_paren(&chars, i + 1);
+            if close_raw != usize::MAX {
+                let close = close_raw;
                 if c == '@' {
                     // @() matches exactly one occurrence - get length of alternatives
                     let content: String = chars[i + 2..close].iter().collect();
-                    let alts = split_extglob_alternatives(&content);
+                    let alts = pattern_utils::split_extglob_alternatives(&content);
                     let alt_lengths: Vec<Option<usize>> = alts
                         .iter()
                         .map(|a| compute_pattern_length(a, extglob))
@@ -375,10 +378,10 @@ pub fn compute_pattern_length(pattern: &str, extglob: bool) -> Option<usize> {
         }
         if c == '[' {
             // Character class matches exactly 1 char
-            let close_idx = find_char_class_end(&chars, i);
-            if close_idx.is_some() {
+            let close_raw = pattern_utils::find_bracket_end(&chars, i);
+            if close_raw != usize::MAX {
                 length += 1;
-                i = close_idx.unwrap() + 1;
+                i = close_raw + 1;
                 continue;
             }
             // No closing bracket - treat as literal
@@ -400,106 +403,6 @@ pub fn compute_pattern_length(pattern: &str, extglob: bool) -> Option<usize> {
     Some(length)
 }
 
-/// Find the matching closing parenthesis, handling nesting.
-fn find_matching_paren(chars: &[char], open_idx: usize) -> Option<usize> {
-    let mut depth = 1;
-    let mut i = open_idx + 1;
-    while i < chars.len() && depth > 0 {
-        let c = chars[i];
-        if c == '\\' {
-            i += 2; // Skip escaped char
-            continue;
-        }
-        if c == '(' {
-            depth += 1;
-        } else if c == ')' {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Split extglob pattern content on | handling nested patterns.
-fn split_extglob_alternatives(content: &str) -> Vec<String> {
-    let mut alternatives: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0;
-    let chars: Vec<char> = content.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\\' {
-            // Escaped character
-            current.push(c);
-            if i + 1 < chars.len() {
-                current.push(chars[i + 1]);
-                i += 2;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-        if c == '(' {
-            depth += 1;
-            current.push(c);
-        } else if c == ')' {
-            depth -= 1;
-            current.push(c);
-        } else if c == '|' && depth == 0 {
-            alternatives.push(current);
-            current = String::new();
-        } else {
-            current.push(c);
-        }
-        i += 1;
-    }
-    alternatives.push(current);
-    alternatives
-}
-
-/// Find the end of a character class starting at position i (where chars[i] is '[').
-fn find_char_class_end(chars: &[char], start: usize) -> Option<usize> {
-    let mut i = start + 1;
-
-    // Handle negation
-    if i < chars.len() && chars[i] == '^' {
-        i += 1;
-    }
-
-    // A ] immediately after [ or [^ is literal, not closing
-    if i < chars.len() && chars[i] == ']' {
-        i += 1;
-    }
-
-    while i < chars.len() {
-        // Handle escape sequences - \] should not end the class
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            i += 2;
-            continue;
-        }
-
-        if chars[i] == ']' {
-            return Some(i);
-        }
-
-        // Handle POSIX classes [:name:]
-        if chars[i] == '[' && i + 1 < chars.len() && chars[i + 1] == ':' {
-            let rest: String = chars[i + 2..].iter().collect();
-            if let Some(close_pos) = rest.find(":]") {
-                i = i + 2 + close_pos + 2;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
 /// Escape regex metacharacters in a string.
 pub fn escape_regex_chars(s: &str) -> String {
     let mut result = String::new();
@@ -513,17 +416,363 @@ pub fn escape_regex_chars(s: &str) -> String {
 }
 
 // ============================================================================
-// Test/[ Command Evaluation
+// [[ ]] Extended Test Evaluation (brush-parser AST)
 // ============================================================================
 
-use crate::interpreter::helpers::string_compare::{compare_strings_str, is_string_compare_op};
-use crate::interpreter::helpers::numeric_compare::{compare_numeric_str, is_numeric_op};
-use crate::interpreter::helpers::string_tests::{evaluate_string_test_str, is_string_test_op};
 use crate::interpreter::helpers::file_tests::{
-    evaluate_file_test_str, is_file_test_operator,
-    evaluate_binary_file_test_str, is_binary_file_test_operator,
-    FileSystem,
+    evaluate_binary_file_test, evaluate_binary_file_test_str, evaluate_file_test,
+    evaluate_file_test_str, is_binary_file_test_operator, is_file_test_operator,
+    BinaryFileTestOperator, FileSystem, FileTestOperator,
 };
+use crate::interpreter::helpers::numeric_compare::{compare_numeric_str, is_numeric_op};
+use crate::interpreter::helpers::string_compare::{compare_strings_str, is_string_compare_op};
+use crate::interpreter::helpers::string_tests::{evaluate_string_test_str, is_string_test_op};
+use crate::interpreter::helpers::variable_tests::{evaluate_nameref_test, evaluate_variable_test};
+use crate::interpreter::word_expansion::{
+    expand_word, expand_word_for_pattern, expand_word_for_regex, CommandSubstFn,
+};
+
+/// Options for extended test evaluation.
+pub struct ExtendedTestOptions<'a> {
+    /// Command substitution callback for word expansion.
+    pub cmd_subst: Option<CommandSubstFn<'a>>,
+}
+
+/// Evaluate a `[[ ... ]]` extended test expression.
+///
+/// Recursively evaluates the brush-parser `ExtendedTestExpr` tree, expanding
+/// word operands as needed and dispatching to the appropriate test helpers.
+///
+/// # Arguments
+/// * `state` - Interpreter state (mutable, needed for word expansion)
+/// * `expr` - The extended test expression AST node
+/// * `fs` - File system implementation for file tests
+/// * `opts` - Options including command substitution callback
+///
+/// # Returns
+/// `true` if the condition is satisfied, `false` otherwise.
+pub fn evaluate_extended_test<F: FileSystem>(
+    state: &mut InterpreterState,
+    expr: &bast::ExtendedTestExpr,
+    fs: &F,
+    opts: &ExtendedTestOptions,
+) -> bool {
+    match expr {
+        bast::ExtendedTestExpr::And(left, right) => {
+            evaluate_extended_test(state, left, fs, opts)
+                && evaluate_extended_test(state, right, fs, opts)
+        }
+
+        bast::ExtendedTestExpr::Or(left, right) => {
+            evaluate_extended_test(state, left, fs, opts)
+                || evaluate_extended_test(state, right, fs, opts)
+        }
+
+        bast::ExtendedTestExpr::Not(inner) => !evaluate_extended_test(state, inner, fs, opts),
+
+        bast::ExtendedTestExpr::Parenthesized(inner) => {
+            evaluate_extended_test(state, inner, fs, opts)
+        }
+
+        bast::ExtendedTestExpr::UnaryTest(predicate, word) => {
+            evaluate_unary_predicate(state, predicate, word, fs, opts)
+        }
+
+        bast::ExtendedTestExpr::BinaryTest(predicate, left, right) => {
+            evaluate_binary_predicate(state, predicate, left, right, fs, opts)
+        }
+    }
+}
+
+/// Expand a `bast::Word` to a string for use in extended test evaluation.
+fn expand_test_word(
+    state: &mut InterpreterState,
+    word: &bast::Word,
+    opts: &ExtendedTestOptions,
+) -> String {
+    expand_word(state, word, opts.cmd_subst).value
+}
+
+/// Expand a `bast::Word` for pattern matching (preserves glob metacharacters).
+fn expand_test_word_for_pattern(
+    state: &mut InterpreterState,
+    word: &bast::Word,
+    opts: &ExtendedTestOptions,
+) -> String {
+    expand_word_for_pattern(state, word, opts.cmd_subst).value
+}
+
+/// Expand a `bast::Word` for regex matching (preserves backslash escapes).
+fn expand_test_word_for_regex(
+    state: &mut InterpreterState,
+    word: &bast::Word,
+    opts: &ExtendedTestOptions,
+) -> String {
+    expand_word_for_regex(state, word, opts.cmd_subst).value
+}
+
+/// Evaluate a unary predicate from the extended test expression.
+fn evaluate_unary_predicate<F: FileSystem>(
+    state: &mut InterpreterState,
+    predicate: &bast::UnaryPredicate,
+    word: &bast::Word,
+    fs: &F,
+    opts: &ExtendedTestOptions,
+) -> bool {
+    let operand = expand_test_word(state, word, opts);
+
+    match predicate {
+        // File tests
+        bast::UnaryPredicate::FileExists => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Exists, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsBlockSpecialFile => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::BlockSpecial, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsCharSpecialFile => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::CharSpecial, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsDir => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Directory, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsRegularFile => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::RegularFile, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsSetgid => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::SetGid, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsSymlink => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::SymbolicLink, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndHasStickyBit => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::StickyBit, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsFifo => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::NamedPipe, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsReadable => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Readable, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsNotZeroLength => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::NonEmpty, &operand)
+        }
+        bast::UnaryPredicate::FdIsOpenTerminal => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Terminal, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsSetuid => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::SetUid, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsWritable => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Writable, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsExecutable => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Executable, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndOwnedByEffectiveGroupId => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::OwnedByGroup, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndModifiedSinceLastRead => evaluate_file_test(
+            fs,
+            &state.cwd,
+            FileTestOperator::ModifiedSinceRead,
+            &operand,
+        ),
+        bast::UnaryPredicate::FileExistsAndOwnedByEffectiveUserId => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::OwnedByUser, &operand)
+        }
+        bast::UnaryPredicate::FileExistsAndIsSocket => {
+            evaluate_file_test(fs, &state.cwd, FileTestOperator::Socket, &operand)
+        }
+
+        // Shell option test (-o)
+        bast::UnaryPredicate::ShellOptionEnabled => evaluate_shell_option(state, &operand),
+
+        // Variable tests
+        bast::UnaryPredicate::ShellVariableIsSetAndAssigned => {
+            let (is_set, _) = evaluate_variable_test(state, &state.env, &operand, None);
+            is_set
+        }
+        bast::UnaryPredicate::ShellVariableIsSetAndNameRef => {
+            evaluate_nameref_test(state, &operand)
+        }
+
+        // String tests
+        bast::UnaryPredicate::StringHasZeroLength => operand.is_empty(),
+        bast::UnaryPredicate::StringHasNonZeroLength => !operand.is_empty(),
+    }
+}
+
+/// Evaluate a binary predicate from the extended test expression.
+fn evaluate_binary_predicate<F: FileSystem>(
+    state: &mut InterpreterState,
+    predicate: &bast::BinaryPredicate,
+    left_word: &bast::Word,
+    right_word: &bast::Word,
+    fs: &F,
+    opts: &ExtendedTestOptions,
+) -> bool {
+    // For pattern matching, the RHS should be expanded differently
+    match predicate {
+        bast::BinaryPredicate::StringExactlyMatchesPattern => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word_for_pattern(state, right_word, opts);
+            let nocasematch = state.shopt_options.nocasematch;
+            let extglob = state.shopt_options.extglob;
+            match_pattern(&left, &right, nocasematch, extglob)
+        }
+
+        bast::BinaryPredicate::StringDoesNotExactlyMatchPattern => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word_for_pattern(state, right_word, opts);
+            let nocasematch = state.shopt_options.nocasematch;
+            let extglob = state.shopt_options.extglob;
+            !match_pattern(&left, &right, nocasematch, extglob)
+        }
+
+        bast::BinaryPredicate::StringMatchesRegex => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word_for_regex(state, right_word, opts);
+            let pattern = posix_ere_to_regex(&right);
+            let nocasematch = state.shopt_options.nocasematch;
+            let regex_str = if nocasematch {
+                format!("(?i){}", pattern)
+            } else {
+                pattern
+            };
+            match Regex::new(&regex_str) {
+                Ok(re) => {
+                    if let Some(caps) = re.captures(&left) {
+                        // Set BASH_REMATCH
+                        let mut env = state.env.clone();
+                        // BASH_REMATCH[0] = entire match
+                        env.insert(
+                            "BASH_REMATCH_0".to_string(),
+                            caps.get(0).map_or("", |m| m.as_str()).to_string(),
+                        );
+                        // BASH_REMATCH[1..n] = capture groups
+                        for i in 1..caps.len() {
+                            env.insert(
+                                format!("BASH_REMATCH_{}", i),
+                                caps.get(i).map_or("", |m| m.as_str()).to_string(),
+                            );
+                        }
+                        state.env = env;
+                        true
+                    } else {
+                        // Clear BASH_REMATCH on failed match
+                        state.env.retain(|k, _| !k.starts_with("BASH_REMATCH_"));
+                        false
+                    }
+                }
+                Err(_) => {
+                    state.env.retain(|k, _| !k.starts_with("BASH_REMATCH_"));
+                    false
+                }
+            }
+        }
+
+        bast::BinaryPredicate::StringExactlyMatchesString => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            left == right
+        }
+
+        bast::BinaryPredicate::StringDoesNotExactlyMatchString => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            left != right
+        }
+
+        bast::BinaryPredicate::StringContainsSubstring => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            left.contains(&right)
+        }
+
+        bast::BinaryPredicate::LeftSortsBeforeRight => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            left < right
+        }
+
+        bast::BinaryPredicate::LeftSortsAfterRight => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            left > right
+        }
+
+        // Arithmetic comparisons
+        bast::BinaryPredicate::ArithmeticEqualTo => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) == parse_numeric(&right)
+        }
+        bast::BinaryPredicate::ArithmeticNotEqualTo => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) != parse_numeric(&right)
+        }
+        bast::BinaryPredicate::ArithmeticLessThan => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) < parse_numeric(&right)
+        }
+        bast::BinaryPredicate::ArithmeticLessThanOrEqualTo => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) <= parse_numeric(&right)
+        }
+        bast::BinaryPredicate::ArithmeticGreaterThan => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) > parse_numeric(&right)
+        }
+        bast::BinaryPredicate::ArithmeticGreaterThanOrEqualTo => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            parse_numeric(&left) >= parse_numeric(&right)
+        }
+
+        // File comparisons
+        bast::BinaryPredicate::LeftFileIsNewerOrExistsWhenRightDoesNot => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            evaluate_binary_file_test(
+                fs,
+                &state.cwd,
+                BinaryFileTestOperator::NewerThan,
+                &left,
+                &right,
+            )
+        }
+        bast::BinaryPredicate::LeftFileIsOlderOrDoesNotExistWhenRightDoes => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            evaluate_binary_file_test(
+                fs,
+                &state.cwd,
+                BinaryFileTestOperator::OlderThan,
+                &left,
+                &right,
+            )
+        }
+        bast::BinaryPredicate::FilesReferToSameDeviceAndInodeNumbers => {
+            let left = expand_test_word(state, left_word, opts);
+            let right = expand_test_word(state, right_word, opts);
+            evaluate_binary_file_test(
+                fs,
+                &state.cwd,
+                BinaryFileTestOperator::SameFile,
+                &left,
+                &right,
+            )
+        }
+    }
+}
+
+// ============================================================================
+// Test/[ Command Evaluation
+// ============================================================================
 
 /// Result of a test expression evaluation.
 #[derive(Debug, Clone)]
@@ -604,7 +853,7 @@ where
         // File test operators
         if is_file_test_operator(op) {
             return TestResult::from_bool(
-                evaluate_file_test_str(fs, &state.cwd, op, operand).unwrap_or(false)
+                evaluate_file_test_str(fs, &state.cwd, op, operand).unwrap_or(false),
             );
         }
 
@@ -653,13 +902,15 @@ where
             if !left_num.valid || !right_num.valid {
                 return TestResult::new(2);
             }
-            return TestResult::from_bool(compare_numeric_str(op, left_num.value, right_num.value).unwrap_or(false));
+            return TestResult::from_bool(
+                compare_numeric_str(op, left_num.value, right_num.value).unwrap_or(false),
+            );
         }
 
         // Binary file tests
         if is_binary_file_test_operator(op) {
             return TestResult::from_bool(
-                evaluate_binary_file_test_str(fs, &state.cwd, op, left, right).unwrap_or(false)
+                evaluate_binary_file_test_str(fs, &state.cwd, op, left, right).unwrap_or(false),
             );
         }
 
@@ -686,7 +937,8 @@ where
 
         // If $1 is '!', negate the 2-argument test
         if left == "!" {
-            let neg_result = evaluate_test_args(state, &[op.clone(), right.clone()], fs, &variable_test);
+            let neg_result =
+                evaluate_test_args(state, &[op.clone(), right.clone()], fs, &variable_test);
             return TestResult::new(match neg_result.exit_code {
                 0 => 1,
                 1 => 0,
@@ -714,7 +966,12 @@ where
 
         // If $1 is '(' and $4 is ')', evaluate $2 $3 as 2-argument test
         if args[0] == "(" && args[3] == ")" {
-            return evaluate_test_args(state, &[args[1].clone(), args[2].clone()], fs, &variable_test);
+            return evaluate_test_args(
+                state,
+                &[args[1].clone(), args[2].clone()],
+                fs,
+                &variable_test,
+            );
         }
     }
 

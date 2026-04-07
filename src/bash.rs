@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::fs::{FileSystem, FsError, InMemoryFs, MkdirOptions};
+use crate::interpreter::helpers::shellopts::{build_bashopts, build_shellopts};
 use crate::interpreter::types::{ExecResult, ExecutionLimits, InterpreterState};
-use crate::interpreter::helpers::shellopts::{build_shellopts, build_bashopts};
 
 /// Options for creating a Bash environment.
 #[derive(Default)]
@@ -46,15 +46,21 @@ impl Bash {
         let use_default_layout = options.cwd.is_none();
         let cwd = options.cwd.unwrap_or_else(|| "/home/user".to_string());
 
-        let fs: Arc<dyn FileSystem> = options.fs.unwrap_or_else(|| {
-            Arc::new(InMemoryFs::new())
-        });
+        let fs: Arc<dyn FileSystem> = options.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
 
         let limits = options.limits.unwrap_or_default();
 
         // Build default environment
         let mut env = HashMap::new();
-        env.insert("HOME".to_string(), if use_default_layout { "/home/user" } else { "/" }.to_string());
+        env.insert(
+            "HOME".to_string(),
+            if use_default_layout {
+                "/home/user"
+            } else {
+                "/"
+            }
+            .to_string(),
+        );
         env.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
         env.insert("IFS".to_string(), " \t\n".to_string());
         env.insert("OSTYPE".to_string(), "linux-gnu".to_string());
@@ -87,9 +93,17 @@ impl Bash {
         let mut state = InterpreterState::default();
         state.env = env;
         state.cwd = cwd.clone();
-        state.previous_dir = if use_default_layout { "/home/user".to_string() } else { "/".to_string() };
+        state.previous_dir = if use_default_layout {
+            "/home/user".to_string()
+        } else {
+            "/".to_string()
+        };
         state.exported_vars = Some(exported);
-        state.readonly_vars = Some(["SHELLOPTS".to_string(), "BASHOPTS".to_string()].into_iter().collect());
+        state.readonly_vars = Some(
+            ["SHELLOPTS".to_string(), "BASHOPTS".to_string()]
+                .into_iter()
+                .collect(),
+        );
 
         // Set SHELLOPTS and BASHOPTS
         let shellopts = build_shellopts(&state.options);
@@ -136,39 +150,46 @@ impl Bash {
             normalize_script(script)
         };
 
-        // Parse the script
-        match crate::parser::parse(&normalized) {
-            Ok(ast) => {
-                // Execute AST via interpreter
-                let fs = self.fs.clone();
-                let limits = self.limits.clone();
-                let state = &mut self.state;
-
-                // Use block_in_place to bridge async context with sync execution engine
-                tokio::task::block_in_place(|| {
-                    let handle = tokio::runtime::Handle::current();
-                    let sync_fs = crate::interpreter::SyncFsAdapter::new(fs, handle);
-                    let engine = crate::interpreter::ExecutionEngine::new(&limits, &sync_fs);
-
-                    match engine.execute_script(state, &ast) {
-                        Ok(result) => result,
-                        Err(crate::interpreter::InterpreterError::Exit(e)) => {
-                            ExecResult::new(e.stdout, e.stderr, e.exit_code)
-                        }
-                        Err(crate::interpreter::InterpreterError::ExecutionLimit(e)) => {
-                            ExecResult::new(e.stdout, e.stderr, 126)
-                        }
-                        Err(e) => {
-                            ExecResult::new(String::new(), format!("{}\n", e), 1)
-                        }
-                    }
-                })
-            }
+        // Parse the script using brush_parser
+        let tokens = match brush_parser::tokenize_str(&normalized) {
+            Ok(t) => t,
             Err(e) => {
-                let msg = e.to_string();
-                ExecResult::new(String::new(), format!("bash: syntax error: {}\n", msg), 2)
+                return ExecResult::new(String::new(), format!("bash: syntax error: {}\n", e), 2);
             }
-        }
+        };
+        let program = match brush_parser::parse_tokens(
+            &tokens,
+            &brush_parser::ParserOptions::default(),
+            &brush_parser::SourceInfo::default(),
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                return ExecResult::new(String::new(), format!("bash: syntax error: {}\n", e), 2);
+            }
+        };
+
+        // Execute AST via interpreter
+        let fs = self.fs.clone();
+        let limits = self.limits.clone();
+        let state = &mut self.state;
+
+        // Use block_in_place to bridge async context with sync execution engine
+        tokio::task::block_in_place(|| {
+            let handle = tokio::runtime::Handle::current();
+            let sync_fs = crate::interpreter::SyncFsAdapter::new(fs.clone(), handle.clone());
+            let engine = crate::interpreter::ExecutionEngine::new(&limits, &sync_fs, fs, handle);
+
+            match engine.execute_script(state, &program) {
+                Ok(result) => result,
+                Err(crate::interpreter::InterpreterError::Exit(e)) => {
+                    ExecResult::new(e.stdout, e.stderr, e.exit_code)
+                }
+                Err(crate::interpreter::InterpreterError::ExecutionLimit(e)) => {
+                    ExecResult::new(e.stdout, e.stderr, 126)
+                }
+                Err(e) => ExecResult::new(String::new(), format!("{}\n", e), 1),
+            }
+        })
     }
 
     /// Read a file relative to cwd.
@@ -197,10 +218,14 @@ impl Bash {
 /// Initialize the filesystem with standard directories and device files.
 async fn init_filesystem(fs: &dyn FileSystem, use_default_layout: bool) {
     let _ = fs.mkdir("/bin", &MkdirOptions { recursive: true }).await;
-    let _ = fs.mkdir("/usr/bin", &MkdirOptions { recursive: true }).await;
+    let _ = fs
+        .mkdir("/usr/bin", &MkdirOptions { recursive: true })
+        .await;
 
     if use_default_layout {
-        let _ = fs.mkdir("/home/user", &MkdirOptions { recursive: true }).await;
+        let _ = fs
+            .mkdir("/home/user", &MkdirOptions { recursive: true })
+            .await;
         let _ = fs.mkdir("/tmp", &MkdirOptions { recursive: true }).await;
     }
 
@@ -213,8 +238,12 @@ async fn init_filesystem(fs: &dyn FileSystem, use_default_layout: bool) {
     let _ = fs.write_file("/dev/stderr", b"").await;
 
     // /proc files
-    let _ = fs.mkdir("/proc/self/fd", &MkdirOptions { recursive: true }).await;
-    let _ = fs.write_file("/proc/version", b"Linux version 6.1.0-just-bash\n").await;
+    let _ = fs
+        .mkdir("/proc/self/fd", &MkdirOptions { recursive: true })
+        .await;
+    let _ = fs
+        .write_file("/proc/version", b"Linux version 6.1.0-just-bash\n")
+        .await;
     let _ = fs.write_file("/proc/self/exe", b"/bin/bash").await;
     let _ = fs.write_file("/proc/self/cmdline", b"bash\0").await;
     let _ = fs.write_file("/proc/self/comm", b"bash\n").await;
@@ -303,31 +332,35 @@ fn normalize_script(script: &str) -> String {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_new_default() {
         let bash = Bash::new(BashOptions::default()).await;
         assert_eq!(bash.get_cwd(), "/home/user");
         assert_eq!(bash.get_env().get("HOME"), Some(&"/home/user".to_string()));
-        assert_eq!(bash.get_env().get("PATH"), Some(&"/usr/bin:/bin".to_string()));
+        assert_eq!(
+            bash.get_env().get("PATH"),
+            Some(&"/usr/bin:/bin".to_string())
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_custom_cwd() {
         let bash = Bash::new(BashOptions {
             cwd: Some("/tmp".to_string()),
             ..Default::default()
-        }).await;
+        })
+        .await;
         assert_eq!(bash.get_cwd(), "/tmp");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exec_empty() {
         let mut bash = Bash::new(BashOptions::default()).await;
         let result = bash.exec("", None).await;
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exec_syntax_error() {
         let mut bash = Bash::new(BashOptions::default()).await;
         let result = bash.exec("if then", None).await;
@@ -335,7 +368,7 @@ mod tests {
         assert!(result.stderr.contains("syntax error"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_filesystem_initialized() {
         let bash = Bash::new(BashOptions::default()).await;
         assert!(bash.fs.exists("/bin").await);
@@ -345,7 +378,7 @@ mod tests {
         assert!(bash.fs.exists("/tmp").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_write_file() {
         let bash = Bash::new(BashOptions::default()).await;
         bash.write_file("test.txt", "hello world").await.unwrap();

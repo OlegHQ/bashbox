@@ -1,11 +1,14 @@
-use async_trait::async_trait;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct XanCommand;
 
 #[async_trait]
 impl Command for XanCommand {
-    fn name(&self) -> &'static str { "xan" }
+    fn name(&self) -> &'static str {
+        "xan"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         if ctx.args.is_empty() || ctx.args.iter().any(|a| a == "--help" || a == "-h") {
@@ -85,9 +88,10 @@ async fn read_input(ctx: &CommandContext, args: &[String]) -> Result<String, Com
             return Ok(ctx.stdin.clone());
         }
         let path = ctx.fs.resolve_path(&ctx.cwd, file);
-        ctx.fs.read_file(&path).await.map_err(|_| {
-            CommandResult::error(format!("xan: {}: No such file or directory\n", file))
-        })
+        ctx.fs
+            .read_file(&path)
+            .await
+            .map_err(|_| CommandResult::error(no_such_file("xan", file)))
     } else {
         Ok(ctx.stdin.clone())
     }
@@ -155,7 +159,11 @@ async fn cmd_tail(ctx: &CommandContext, args: &[String]) -> CommandResult {
     if rows.len() <= 1 {
         return CommandResult::success(rows_to_csv(&rows));
     }
-    let start = if rows.len() > n + 1 { rows.len() - n } else { 1 };
+    let start = if rows.len() > n + 1 {
+        rows.len() - n
+    } else {
+        1
+    };
     let mut result = vec![rows[0].clone()];
     result.extend_from_slice(&rows[start..]);
     CommandResult::success(rows_to_csv(&result))
@@ -175,17 +183,26 @@ async fn cmd_select(ctx: &CommandContext, args: &[String]) -> CommandResult {
     }
 
     let header = &rows[0];
-    let indices: Vec<usize> = cols.iter().filter_map(|c| {
-        if let Ok(i) = c.parse::<usize>() {
-            Some(i)
-        } else {
-            header.iter().position(|h| h == *c)
-        }
-    }).collect();
+    let indices: Vec<usize> = cols
+        .iter()
+        .filter_map(|c| {
+            if let Ok(i) = c.parse::<usize>() {
+                Some(i)
+            } else {
+                header.iter().position(|h| h == *c)
+            }
+        })
+        .collect();
 
-    let result: Vec<Vec<String>> = rows.iter().map(|row| {
-        indices.iter().filter_map(|&i| row.get(i).cloned()).collect()
-    }).collect();
+    let result: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            indices
+                .iter()
+                .filter_map(|&i| row.get(i).cloned())
+                .collect()
+        })
+        .collect();
 
     CommandResult::success(rows_to_csv(&result))
 }
@@ -241,8 +258,12 @@ async fn cmd_sort(ctx: &CommandContext, args: &[String]) -> CommandResult {
     let mut reverse = false;
 
     for i in 0..args.len() {
-        if args[i] == "-N" { numeric = true; }
-        if args[i] == "-r" { reverse = true; }
+        if args[i] == "-N" {
+            numeric = true;
+        }
+        if args[i] == "-r" {
+            reverse = true;
+        }
         if !args[i].starts_with('-') && col_name.is_none() {
             col_name = Some(&args[i]);
         }
@@ -257,10 +278,15 @@ async fn cmd_sort(ctx: &CommandContext, args: &[String]) -> CommandResult {
         return CommandResult::success(rows_to_csv(&rows));
     }
 
-    let col_idx = col_name.and_then(|name| {
-        if let Ok(i) = name.parse::<usize>() { Some(i) }
-        else { rows[0].iter().position(|h| h == name) }
-    }).unwrap_or(0);
+    let col_idx = col_name
+        .and_then(|name| {
+            if let Ok(i) = name.parse::<usize>() {
+                Some(i)
+            } else {
+                rows[0].iter().position(|h| h == name)
+            }
+        })
+        .unwrap_or(0);
 
     let mut data: Vec<Vec<String>> = rows[1..].to_vec();
     data.sort_by(|a, b| {
@@ -275,7 +301,9 @@ async fn cmd_sort(ctx: &CommandContext, args: &[String]) -> CommandResult {
         }
     });
 
-    if reverse { data.reverse(); }
+    if reverse {
+        data.reverse();
+    }
 
     let mut result = vec![rows[0].clone()];
     result.extend(data);
@@ -283,7 +311,9 @@ async fn cmd_sort(ctx: &CommandContext, args: &[String]) -> CommandResult {
 }
 
 async fn cmd_filter(ctx: &CommandContext, args: &[String]) -> CommandResult {
-    let expr = args.iter().find(|a| !a.starts_with('-') && a.contains(|c| c == '>' || c == '<' || c == '='));
+    let expr = args
+        .iter()
+        .find(|a| !a.starts_with('-') && a.contains(|c| c == '>' || c == '<' || c == '='));
 
     let input = match read_input(ctx, args).await {
         Ok(i) => i,
@@ -330,10 +360,22 @@ fn matches_filter(cell: &str, op: &str, val: &str) -> bool {
     let val_num: Option<f64> = val.parse().ok();
 
     match op {
-        ">" => cell_num.zip(val_num).map(|(c, v)| c > v).unwrap_or(cell > val),
-        "<" => cell_num.zip(val_num).map(|(c, v)| c < v).unwrap_or(cell < val),
-        ">=" => cell_num.zip(val_num).map(|(c, v)| c >= v).unwrap_or(cell >= val),
-        "<=" => cell_num.zip(val_num).map(|(c, v)| c <= v).unwrap_or(cell <= val),
+        ">" => cell_num
+            .zip(val_num)
+            .map(|(c, v)| c > v)
+            .unwrap_or(cell > val),
+        "<" => cell_num
+            .zip(val_num)
+            .map(|(c, v)| c < v)
+            .unwrap_or(cell < val),
+        ">=" => cell_num
+            .zip(val_num)
+            .map(|(c, v)| c >= v)
+            .unwrap_or(cell >= val),
+        "<=" => cell_num
+            .zip(val_num)
+            .map(|(c, v)| c <= v)
+            .unwrap_or(cell <= val),
         "==" | "=" => cell == val,
         "!=" => cell != val,
         _ => false,
@@ -376,16 +418,23 @@ async fn cmd_view(ctx: &CommandContext, args: &[String]) -> CommandResult {
         return CommandResult::success(String::new());
     }
 
-    let col_widths: Vec<usize> = (0..rows[0].len()).map(|i| {
-        rows.iter().map(|r| r.get(i).map(|s| s.len()).unwrap_or(0)).max().unwrap_or(0)
-    }).collect();
+    let col_widths: Vec<usize> = (0..rows[0].len())
+        .map(|i| {
+            rows.iter()
+                .map(|r| r.get(i).map(|s| s.len()).unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
 
     let mut out = String::new();
     for row in &rows {
         for (i, cell) in row.iter().enumerate() {
             let width = col_widths.get(i).copied().unwrap_or(0);
             out.push_str(&format!("{:width$}", cell, width = width));
-            if i < row.len() - 1 { out.push_str("  "); }
+            if i < row.len() - 1 {
+                out.push_str("  ");
+            }
         }
         out.push('\n');
     }
@@ -393,7 +442,11 @@ async fn cmd_view(ctx: &CommandContext, args: &[String]) -> CommandResult {
 }
 
 async fn cmd_to(ctx: &CommandContext, args: &[String]) -> CommandResult {
-    let format = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("json");
+    let format = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .unwrap_or("json");
 
     let input = match read_input(ctx, args).await {
         Ok(i) => i,
@@ -426,7 +479,11 @@ async fn cmd_to(ctx: &CommandContext, args: &[String]) -> CommandResult {
 }
 
 async fn cmd_from(ctx: &CommandContext, args: &[String]) -> CommandResult {
-    let format = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("json");
+    let format = args
+        .iter()
+        .find(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .unwrap_or("json");
 
     let input = match read_input(ctx, args).await {
         Ok(i) => i,
@@ -455,12 +512,17 @@ async fn cmd_from(ctx: &CommandContext, args: &[String]) -> CommandResult {
     let mut rows: Vec<Vec<String>> = vec![headers.clone()];
     for item in &arr {
         if let serde_json::Value::Object(obj) = item {
-            let row: Vec<String> = headers.iter().map(|h| {
-                obj.get(h).map(|v| match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    _ => v.to_string(),
-                }).unwrap_or_default()
-            }).collect();
+            let row: Vec<String> = headers
+                .iter()
+                .map(|h| {
+                    obj.get(h)
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            _ => v.to_string(),
+                        })
+                        .unwrap_or_default()
+                })
+                .collect();
             rows.push(row);
         }
     }
@@ -471,9 +533,9 @@ async fn cmd_from(ctx: &CommandContext, args: &[String]) -> CommandResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -489,7 +551,7 @@ mod tests {
 
     const CSV_DATA: &str = "name,age,city\nalice,30,nyc\nbob,25,la\ncharlie,35,sf\n";
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = XanCommand.execute(ctx).await;
@@ -497,7 +559,7 @@ mod tests {
         assert!(result.stdout.contains("headers"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_headers() {
         let mut ctx = create_ctx(vec!["headers"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -507,7 +569,7 @@ mod tests {
         assert!(result.stdout.contains("city"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_count() {
         let mut ctx = create_ctx(vec!["count"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -515,7 +577,7 @@ mod tests {
         assert!(result.stdout.contains("3"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_head() {
         let mut ctx = create_ctx(vec!["head"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -524,7 +586,7 @@ mod tests {
         assert!(result.stdout.contains("bob"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_tail() {
         let mut ctx = create_ctx(vec!["tail"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -532,14 +594,14 @@ mod tests {
         assert!(result.stdout.contains("charlie"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_select() {
         let rows = parse_csv(CSV_DATA);
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0][0], "name");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sort() {
         let mut ctx = create_ctx(vec!["sort", "-N", "-"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -547,20 +609,20 @@ mod tests {
         assert!(result.stdout.contains("bob"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_filter() {
         assert!(matches_filter("30", ">", "28"));
         assert!(!matches_filter("25", ">", "28"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_search() {
         let re = regex_lite::Regex::new("alice").unwrap();
         assert!(re.is_match("alice"));
         assert!(!re.is_match("bob"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_to_json() {
         let mut ctx = create_ctx(vec!["to"]);
         ctx.stdin = CSV_DATA.to_string();
@@ -568,7 +630,7 @@ mod tests {
         assert!(result.stdout.contains("alice"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_from_json() {
         let mut ctx = create_ctx(vec!["from"]);
         ctx.stdin = r#"[{"name":"alice","age":"30"}]"#.to_string();
@@ -576,7 +638,7 @@ mod tests {
         assert!(result.stdout.contains("alice"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unknown_command() {
         let ctx = create_ctx(vec!["unknown"]);
         let result = XanCommand.execute(ctx).await;

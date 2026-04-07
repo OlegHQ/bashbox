@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 use std::time::Instant;
 
 pub struct TimeCommand;
@@ -23,7 +23,9 @@ impl Command for TimeCommand {
                 "-f" | "--format" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return CommandResult::error("time: missing argument to '-f'\n".to_string());
+                        return CommandResult::error(
+                            "time: missing argument to '-f'\n".to_string(),
+                        );
                     }
                     format = ctx.args[i].clone();
                     i += 1;
@@ -31,7 +33,9 @@ impl Command for TimeCommand {
                 "-o" | "--output" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return CommandResult::error("time: missing argument to '-o'\n".to_string());
+                        return CommandResult::error(
+                            "time: missing argument to '-o'\n".to_string(),
+                        );
                     }
                     output_file = Some(ctx.args[i].clone());
                     i += 1;
@@ -75,7 +79,8 @@ impl Command for TimeCommand {
                 ctx.cwd.clone(),
                 ctx.env.clone(),
                 ctx.fs.clone(),
-            ).await
+            )
+            .await
         } else {
             return CommandResult::error("time: exec not available\n".to_string());
         };

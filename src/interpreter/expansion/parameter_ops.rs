@@ -185,7 +185,12 @@ pub fn apply_case_modification(value: &str, operator: &str) -> String {
 
 /// Apply transform operation to a value.
 /// operator: "Q" for quoting, "P" for prompt expansion, "a" for attributes, etc.
-pub fn apply_transform_op(state: &InterpreterState, parameter: &str, value: &str, operator: &str) -> String {
+pub fn apply_transform_op(
+    state: &InterpreterState,
+    parameter: &str,
+    value: &str,
+    operator: &str,
+) -> String {
     match operator {
         "Q" => quote_value(value),
         "P" => expand_prompt(state, value),
@@ -346,10 +351,7 @@ where
 
 /// Handle Indirection operation: ${!param}
 /// Returns the value of the variable whose name is stored in param.
-pub fn handle_indirection(
-    state: &InterpreterState,
-    parameter: &str,
-) -> Result<String, String> {
+pub fn handle_indirection(state: &InterpreterState, parameter: &str) -> Result<String, String> {
     let target_name = get_variable(state, parameter);
 
     if target_name.is_empty() {
@@ -448,7 +450,8 @@ pub fn apply_transform_op_extended(
             let attrs = get_variable_attributes(state, parameter);
             if attrs.contains('a') || attrs.contains('A') {
                 let elements = get_array_elements(state, parameter);
-                let values: Vec<String> = elements.iter().map(|(_, v)| format!("\"{}\"", v)).collect();
+                let values: Vec<String> =
+                    elements.iter().map(|(_, v)| format!("\"{}\"", v)).collect();
                 format!("declare -{} {}=({})", attrs, parameter, values.join(" "))
             } else {
                 format!("declare -{} {}=\"{}\"", attrs, parameter, value)
@@ -569,7 +572,8 @@ mod tests {
 
     #[test]
     fn test_pattern_replacement() {
-        let result = apply_pattern_replacement_op("hello world", "world", "rust", false, false, false);
+        let result =
+            apply_pattern_replacement_op("hello world", "world", "rust", false, false, false);
         assert_eq!(result, "hello rust");
     }
 

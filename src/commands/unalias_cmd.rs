@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 const ALIAS_PREFIX: &str = "BASH_ALIAS_";
 
@@ -7,12 +8,15 @@ pub struct UnaliasCommand;
 
 #[async_trait]
 impl Command for UnaliasCommand {
-    fn name(&self) -> &'static str { "unalias" }
+    fn name(&self) -> &'static str {
+        "unalias"
+    }
 
     async fn execute(&self, mut ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
-                "unalias - remove alias definitions\n\nUsage: unalias [-a] name [name ...]\n".to_string()
+                "unalias - remove alias definitions\n\nUsage: unalias [-a] name [name ...]\n"
+                    .to_string(),
             );
         }
 
@@ -25,7 +29,9 @@ impl Command for UnaliasCommand {
         }
 
         if ctx.args.first().map(|s| s.as_str()) == Some("-a") {
-            let keys_to_remove: Vec<_> = ctx.env.keys()
+            let keys_to_remove: Vec<_> = ctx
+                .env
+                .keys()
                 .filter(|k| k.starts_with(ALIAS_PREFIX))
                 .cloned()
                 .collect();
@@ -61,9 +67,9 @@ impl Command for UnaliasCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -89,7 +95,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unalias_help() {
         let cmd = UnaliasCommand;
         let result = cmd.execute(create_ctx(vec!["--help"])).await;
@@ -97,7 +103,7 @@ mod tests {
         assert!(result.stdout.contains("unalias"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unalias_no_args() {
         let cmd = UnaliasCommand;
         let result = cmd.execute(create_ctx(vec![])).await;
@@ -105,7 +111,7 @@ mod tests {
         assert!(result.stderr.contains("usage"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unalias_remove_all() {
         let cmd = UnaliasCommand;
         let mut env = HashMap::new();
@@ -115,7 +121,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_unalias_not_found() {
         let cmd = UnaliasCommand;
         let result = cmd.execute(create_ctx(vec!["nonexistent"])).await;

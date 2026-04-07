@@ -1,8 +1,10 @@
 // src/commands/base64_cmd/mod.rs
-use async_trait::async_trait;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 pub struct Base64Command;
 
@@ -24,10 +26,7 @@ async fn read_input(ctx: &CommandContext, files: &[String]) -> Result<Vec<u8>, C
         match ctx.fs.read_file_buffer(&path).await {
             Ok(data) => result.extend_from_slice(&data),
             Err(_) => {
-                return Err(CommandResult::error(format!(
-                    "base64: {}: No such file or directory\n",
-                    file
-                )));
+                return Err(CommandResult::error(no_such_file("base64", file)));
             }
         }
     }
@@ -44,7 +43,7 @@ impl Command for Base64Command {
         let args = &ctx.args;
 
         // Check --help
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: base64 [OPTION]... [FILE]\n\
                  base64 encode/decode data and print to standard output.\n\n\
@@ -139,59 +138,10 @@ impl Command for Base64Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    fn make_ctx_with_stdin(args: Vec<&str>, stdin: &str) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    fn make_ctx_with_fs(args: Vec<&str>, fs: Arc<InMemoryFs>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    fn make_ctx_with_stdin_and_fs(args: Vec<&str>, stdin: &str, fs: Arc<InMemoryFs>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_encode_simple_string() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec![], "Hello, World!");
@@ -201,7 +151,7 @@ mod tests {
         assert_eq!(result.stdout, "SGVsbG8sIFdvcmxkIQ==\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_encode_with_default_wrap() {
         let cmd = Base64Command;
         // Create a string long enough to exceed 76 chars when encoded
@@ -216,7 +166,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_encode_with_no_wrap() {
         let cmd = Base64Command;
         let long_input = "A".repeat(60);
@@ -229,7 +179,7 @@ mod tests {
         assert_eq!(result.stdout, expected);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_encode_with_custom_wrap() {
         let cmd = Base64Command;
         let input = "Hello, World!"; // encodes to "SGVsbG8sIFdvcmxkIQ==" (20 chars)
@@ -242,7 +192,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_valid_base64() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec!["-d"], "SGVsbG8sIFdvcmxkIQ==");
@@ -251,7 +201,7 @@ mod tests {
         assert_eq!(result.stdout, "Hello, World!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_with_whitespace() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec!["--decode"], "SGVsbG8s\nIFdvcmxk\nIQ==\n");
@@ -260,7 +210,7 @@ mod tests {
         assert_eq!(result.stdout, "Hello, World!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_decode_invalid_base64() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec!["-d"], "!!!invalid!!!");
@@ -269,7 +219,7 @@ mod tests {
         assert_eq!(result.stderr, "base64: invalid input\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_from_stdin() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec!["-"], "test data");
@@ -280,7 +230,7 @@ mod tests {
         assert_eq!(result.stdout, format!("{}\n", expected));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_from_file() {
         let cmd = Base64Command;
         let fs = Arc::new(InMemoryFs::new());
@@ -292,7 +242,7 @@ mod tests {
         assert_eq!(result.stdout, format!("{}\n", expected));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_from_multiple_files() {
         let cmd = Base64Command;
         let fs = Arc::new(InMemoryFs::new());
@@ -305,7 +255,7 @@ mod tests {
         assert_eq!(result.stdout, format!("{}\n", expected));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_binary_round_trip() {
         let cmd = Base64Command;
         // Use ASCII-safe binary data for round-trip (avoids UTF-8 lossy issues)
@@ -323,7 +273,7 @@ mod tests {
         assert_eq!(decoded, binary_data);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_input() {
         let cmd = Base64Command;
         let ctx = make_ctx_with_stdin(vec![], "");
@@ -333,7 +283,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_file_not_found() {
         let cmd = Base64Command;
         let ctx = make_ctx(vec!["/nonexistent.txt"]);
@@ -342,7 +292,7 @@ mod tests {
         assert!(result.stderr.contains("No such file or directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_wrap_with_long_flag() {
         let cmd = Base64Command;
         let input = "Hello, World!"; // 20 base64 chars
@@ -354,7 +304,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stdin_with_dash_and_file() {
         let cmd = Base64Command;
         let fs = Arc::new(InMemoryFs::new());

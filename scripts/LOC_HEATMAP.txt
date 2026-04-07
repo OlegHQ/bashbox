@@ -1,0 +1,56 @@
+just-bash LOC heatmap (cfg(test) mod blocks in src; tests/*.rs counted as all test)
+========================================================================
+scope                           total   non-test   test-ish
+------------------------------------------------------------------------
+src/bash.rs                       472        332        140
+src/bin                           210        210          0
+src/commands                    34302      20203      14099
+src/fs                           2090       1209        881
+src/interpreter                 35357      26759       8598
+src/lib.rs                         30         30          0
+src/main.rs                       104        104          0
+src/network                      1019        503        516
+src/parser.rs                      17         17          0
+src/sandbox                       516        252        264
+src/shell                        1765        875        890
+tests                            1529          0       1529  (integration tests dir)
+------------------------------------------------------------------------
+ALL (src+tests)                 77411      50494      26917
+
+Largest files (total lines, non-test, test-ish, path)
+------------------------------------------------------------------------
+  1964    459   1505  src/commands/find/mod.rs
+  1670    590   1080  src/commands/tar/mod.rs
+  1578    773    805  src/commands/gzip/mod.rs
+  1572    810    762  src/fs/in_memory_fs.rs
+  1529      0   1529  tests/curl.rs
+  1158   1082     76  src/interpreter/builtins/declare_cmd.rs
+  1109    992    117  src/interpreter/conditionals.rs
+  1052    435    617  src/shell/glob_expander.rs
+  1050    873    177  src/interpreter/word_expansion.rs
+   930    756    174  src/interpreter/execution_engine.rs
+   880    118    762  src/commands/sort/mod.rs
+   841    592    249  src/interpreter/expansion/unquoted_expansion.rs
+   837    837      0  src/commands/grep/tests.rs
+   835    508    327  src/commands/find/matcher.rs
+   796    796      0  src/commands/awk/tests.rs
+   787    630    157  src/interpreter/builtins/compgen_cmd.rs
+   735    576    159  src/interpreter/expansion/indirect_expansion.rs
+   735    585    150  src/interpreter/expansion/word_glob_expansion.rs
+   728    565    163  src/interpreter/builtins/read_cmd.rs
+   727    383    344  src/commands/join/mod.rs
+   718    366    352  src/interpreter/pipeline_execution.rs
+   692    653     39  src/interpreter/redirections.rs
+   690    594     96  src/interpreter/expansion/variable.rs
+   665    494    171  src/commands/yq/mod.rs
+   664    479    185  src/interpreter/subshell_group.rs
+   661    427    234  src/interpreter/arithmetic.rs
+   660    532    128  src/commands/xan_cmd.rs
+   648    557     91  src/interpreter/builtins/declare_print.rs
+   620    295    325  src/commands/printf/mod.rs
+   611    520     91  src/interpreter/builtins/shopt_cmd.rs
+   606    524     82  src/interpreter/expansion/parameter_ops.rs
+   605    519     86  src/interpreter/expansion/pattern_expansion.rs
+   602    508     94  src/interpreter/builtins/set_cmd.rs
+   602    446    156  src/interpreter/builtins/unset_cmd.rs
+   592    362    230  src/commands/find/parser.rs

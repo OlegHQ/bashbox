@@ -144,7 +144,14 @@ mod tests {
     fn test_array_pattern_removal() {
         let state = make_state();
         let regex = pattern_to_regex("hello", false, false);
-        let result = apply_array_pattern_removal(&state, "arr", false, &regex, PatternRemovalSide::Prefix, false);
+        let result = apply_array_pattern_removal(
+            &state,
+            "arr",
+            false,
+            &regex,
+            PatternRemovalSide::Prefix,
+            false,
+        );
         assert_eq!(result, vec![" world", "foo bar", " foo"]);
     }
 
@@ -154,8 +161,14 @@ mod tests {
             env: HashMap::new(),
             ..Default::default()
         };
-        let result =
-            apply_array_pattern_removal(&state, "nonexistent", false, ".*", PatternRemovalSide::Prefix, false);
+        let result = apply_array_pattern_removal(
+            &state,
+            "nonexistent",
+            false,
+            ".*",
+            PatternRemovalSide::Prefix,
+            false,
+        );
         assert!(result.is_empty());
     }
 }

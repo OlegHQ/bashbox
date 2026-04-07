@@ -1,5 +1,6 @@
 // src/commands/tar/mod.rs
 pub mod archive;
+pub mod helpers;
 pub mod options;
 
 use async_trait::async_trait;
@@ -8,317 +9,13 @@ use std::sync::Arc;
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::types::{FileSystem, MkdirOptions};
 
-use archive::{
-    compress_gzip, create_archive, decompress_gzip, is_gzip, parse_archive,
-    TarEntry,
+use archive::{compress_gzip_default, create_archive, parse_archive, TarEntry};
+use helpers::{
+    collect_files, format_mode, format_mtime, matches_exclude, read_archive, strip_components,
 };
 use options::{parse_options, TarOperation};
 
 pub struct TarCommand;
-
-/// Simple glob matching: `*` matches any chars except `/`, `?` matches single char.
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pat: Vec<char> = pattern.chars().collect();
-    let txt: Vec<char> = text.chars().collect();
-    glob_match_inner(&pat, &txt)
-}
-
-fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
-    let mut pi = 0;
-    let mut ti = 0;
-    let mut star_pi = None;
-    let mut star_ti = None;
-
-    while ti < txt.len() {
-        if pi < pat.len() && pat[pi] == '?' {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == '*' {
-            star_pi = Some(pi);
-            star_ti = Some(ti);
-            pi += 1;
-        } else if pi < pat.len() && pat[pi] == txt[ti] {
-            pi += 1;
-            ti += 1;
-        } else if let (Some(sp), Some(st)) = (star_pi, star_ti) {
-            pi = sp + 1;
-            let new_st = st + 1;
-            star_ti = Some(new_st);
-            ti = new_st;
-        } else {
-            return false;
-        }
-    }
-
-    while pi < pat.len() && pat[pi] == '*' {
-        pi += 1;
-    }
-
-    pi == pat.len()
-}
-
-/// Check if a path matches any exclude pattern.
-fn matches_exclude(path: &str, patterns: &[String]) -> bool {
-    let basename = if let Some(pos) = path.rfind('/') {
-        &path[pos + 1..]
-    } else {
-        path
-    };
-
-    for pattern in patterns {
-        // Check full path match
-        if glob_match(pattern, path) {
-            return true;
-        }
-        // Check if path starts with pattern/
-        let with_slash = format!("{}/", pattern);
-        if glob_match(&with_slash, path) || path.starts_with(&with_slash) {
-            return true;
-        }
-        // Check basename match (for patterns like *.log)
-        if !pattern.contains('/') && glob_match(pattern, basename) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Strip N leading path components.
-fn strip_components(path: &str, count: usize) -> String {
-    if count == 0 {
-        return path.to_string();
-    }
-    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-    if parts.len() <= count {
-        return String::new();
-    }
-    parts[count..].join("/")
-}
-
-/// Format file mode for verbose output (like ls -l).
-fn format_mode(mode: u32, is_dir: bool) -> String {
-    let prefix = if is_dir { 'd' } else { '-' };
-    let perms = [
-        if mode & 0o400 != 0 { 'r' } else { '-' },
-        if mode & 0o200 != 0 { 'w' } else { '-' },
-        if mode & 0o100 != 0 { 'x' } else { '-' },
-        if mode & 0o040 != 0 { 'r' } else { '-' },
-        if mode & 0o020 != 0 { 'w' } else { '-' },
-        if mode & 0o010 != 0 { 'x' } else { '-' },
-        if mode & 0o004 != 0 { 'r' } else { '-' },
-        if mode & 0o002 != 0 { 'w' } else { '-' },
-        if mode & 0o001 != 0 { 'x' } else { '-' },
-    ];
-    let mut s = String::with_capacity(10);
-    s.push(prefix);
-    for c in &perms {
-        s.push(*c);
-    }
-    s
-}
-
-/// Format a unix timestamp for verbose output.
-fn format_mtime(mtime: u64) -> String {
-    // Simple date formatting from unix timestamp
-    let secs = mtime;
-    // Calculate date components from unix timestamp
-    let days = secs / 86400;
-    let time_of_day = secs % 86400;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-
-    // Calculate year/month/day from days since epoch (1970-01-01)
-    let mut y = 1970i64;
-    let mut remaining_days = days as i64;
-
-    loop {
-        let days_in_year = if is_leap_year(y) { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        y += 1;
-    }
-
-    let month_days = if is_leap_year(y) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 0usize;
-    for (i, &md) in month_days.iter().enumerate() {
-        if remaining_days < md {
-            month = i;
-            break;
-        }
-        remaining_days -= md;
-    }
-
-    let day = remaining_days + 1;
-
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        y,
-        month + 1,
-        day,
-        hours,
-        minutes
-    )
-}
-
-fn is_leap_year(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
-
-/// Convert SystemTime to unix timestamp (seconds since epoch).
-fn system_time_to_unix(t: std::time::SystemTime) -> u64 {
-    t.duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Recursively collect files from the virtual filesystem.
-async fn collect_files(
-    fs: &Arc<dyn FileSystem>,
-    base_path: &str,
-    relative_path: &str,
-    exclude: &[String],
-    entries: &mut Vec<TarEntry>,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    let full_path = fs.resolve_path(base_path, relative_path);
-
-    if matches_exclude(relative_path, exclude) {
-        return errors;
-    }
-
-    let stat = match fs.stat(&full_path).await {
-        Ok(s) => s,
-        Err(e) => {
-            errors.push(format!("tar: {}: {}", relative_path, e));
-            return errors;
-        }
-    };
-
-    if stat.is_directory {
-        // Add directory entry
-        entries.push(TarEntry {
-            path: relative_path.to_string(),
-            content: Vec::new(),
-            mode: stat.mode,
-            size: 0,
-            mtime: system_time_to_unix(stat.mtime),
-            is_directory: true,
-            is_symlink: false,
-            link_target: String::new(),
-        });
-
-        // Read directory contents
-        let items = match fs.readdir(&full_path).await {
-            Ok(items) => items,
-            Err(e) => {
-                errors.push(format!("tar: {}: {}", relative_path, e));
-                return errors;
-            }
-        };
-
-        let mut sorted_items = items;
-        sorted_items.sort();
-
-        for item in sorted_items {
-            let child_rel = if relative_path.is_empty() {
-                item.clone()
-            } else {
-                format!("{}/{}", relative_path, item)
-            };
-            let child_errors = Box::pin(collect_files(
-                fs,
-                base_path,
-                &child_rel,
-                exclude,
-                entries,
-            ))
-            .await;
-            errors.extend(child_errors);
-        }
-    } else if stat.is_file {
-        let content = match fs.read_file_buffer(&full_path).await {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(format!("tar: {}: {}", relative_path, e));
-                return errors;
-            }
-        };
-        entries.push(TarEntry {
-            path: relative_path.to_string(),
-            content: content.clone(),
-            mode: stat.mode,
-            size: content.len() as u64,
-            mtime: system_time_to_unix(stat.mtime),
-            is_directory: false,
-            is_symlink: false,
-            link_target: String::new(),
-        });
-    }
-
-    errors
-}
-
-/// Read and decompress an archive from file or stdin.
-async fn read_archive(
-    ctx: &CommandContext,
-    file: &Option<String>,
-    use_gzip: bool,
-) -> Result<Vec<TarEntry>, CommandResult> {
-    let archive_data = if let Some(ref f) = file {
-        if f == "-" {
-            ctx.stdin.chars().map(|c| c as u8).collect::<Vec<u8>>()
-        } else {
-            let archive_path = ctx.fs.resolve_path(&ctx.cwd, f);
-            match ctx.fs.read_file_buffer(&archive_path).await {
-                Ok(data) => data,
-                Err(_) => {
-                    return Err(CommandResult::with_exit_code(
-                        String::new(),
-                        format!(
-                            "tar: {}: Cannot open: No such file or directory\n",
-                            f
-                        ),
-                        2,
-                    ));
-                }
-            }
-        }
-    } else {
-        ctx.stdin.chars().map(|c| c as u8).collect::<Vec<u8>>()
-    };
-
-    // Decompress if needed
-    let data = if use_gzip || is_gzip(&archive_data) {
-        match decompress_gzip(&archive_data) {
-            Ok(d) => d,
-            Err(e) => {
-                return Err(CommandResult::with_exit_code(
-                    String::new(),
-                    format!("tar: gzip decompression error: {}\n", e),
-                    2,
-                ));
-            }
-        }
-    } else {
-        archive_data
-    };
-
-    match parse_archive(&data) {
-        Ok(entries) => Ok(entries),
-        Err(e) => Err(CommandResult::with_exit_code(
-            String::new(),
-            format!("tar: {}\n", e),
-            2,
-        )),
-    }
-}
 
 #[async_trait]
 impl Command for TarCommand {
@@ -337,8 +34,7 @@ impl Command for TarCommand {
             None => {
                 return CommandResult::with_exit_code(
                     String::new(),
-                    "tar: You must specify one of -c, -r, -u, -x, or -t\n"
-                        .to_string(),
+                    "tar: You must specify one of -c, -r, -u, -x, or -t\n".to_string(),
                     2,
                 );
             }
@@ -397,21 +93,11 @@ impl Command for TarCommand {
         }
 
         match operation {
-            TarOperation::Create => {
-                self.create_archive(&ctx, &opts, &files, &exclude).await
-            }
-            TarOperation::Extract => {
-                self.extract_archive(&ctx, &opts, &files, &exclude).await
-            }
-            TarOperation::List => {
-                self.list_archive(&ctx, &opts, &files, &exclude).await
-            }
-            TarOperation::Append => {
-                self.append_archive(&ctx, &opts, &files, &exclude).await
-            }
-            TarOperation::Update => {
-                self.update_archive(&ctx, &opts, &files, &exclude).await
-            }
+            TarOperation::Create => self.create_archive(&ctx, &opts, &files, &exclude).await,
+            TarOperation::Extract => self.extract_archive(&ctx, &opts, &files, &exclude).await,
+            TarOperation::List => self.list_archive(&ctx, &opts, &files, &exclude).await,
+            TarOperation::Append => self.append_archive(&ctx, &opts, &files, &exclude).await,
+            TarOperation::Update => self.update_archive(&ctx, &opts, &files, &exclude).await,
         }
     }
 }
@@ -427,8 +113,7 @@ impl TarCommand {
         if files.is_empty() {
             return CommandResult::with_exit_code(
                 String::new(),
-                "tar: Cowardly refusing to create an empty archive\n"
-                    .to_string(),
+                "tar: Cowardly refusing to create an empty archive\n".to_string(),
                 2,
             );
         }
@@ -445,24 +130,15 @@ impl TarCommand {
 
         for file in files {
             let mut entries = Vec::new();
-            let errors = collect_files(
-                &ctx.fs,
-                &work_dir,
-                file,
-                exclude,
-                &mut entries,
-            )
-            .await;
+            let errors = collect_files(&ctx.fs, &work_dir, file, exclude, &mut entries).await;
             all_errors.extend(errors);
 
             if opts.verbose {
                 for entry in &entries {
                     if entry.is_directory {
-                        verbose_output
-                            .push_str(&format!("{}/\n", entry.path));
+                        verbose_output.push_str(&format!("{}/\n", entry.path));
                     } else {
-                        verbose_output
-                            .push_str(&format!("{}\n", entry.path));
+                        verbose_output.push_str(&format!("{}\n", entry.path));
                     }
                 }
             }
@@ -483,7 +159,7 @@ impl TarCommand {
 
         // Compress if needed
         let final_data = if opts.gzip {
-            match compress_gzip(&archive_data, 6) {
+            match compress_gzip_default(&archive_data) {
                 Ok(d) => d,
                 Err(e) => {
                     return CommandResult::with_exit_code(
@@ -503,9 +179,7 @@ impl TarCommand {
                 final_data.iter().map(|&b| b as char).collect::<String>()
             } else {
                 let archive_path = ctx.fs.resolve_path(&ctx.cwd, f);
-                if let Err(e) =
-                    ctx.fs.write_file(&archive_path, &final_data).await
-                {
+                if let Err(e) = ctx.fs.write_file(&archive_path, &final_data).await {
                     return CommandResult::with_exit_code(
                         String::new(),
                         format!("tar: {}: {}\n", f, e),
@@ -524,11 +198,7 @@ impl TarCommand {
             stderr.push_str(&format!("{}\n", all_errors.join("\n")));
         }
 
-        CommandResult::with_exit_code(
-            stdout,
-            stderr,
-            if all_errors.is_empty() { 0 } else { 2 },
-        )
+        CommandResult::with_exit_code(stdout, stderr, if all_errors.is_empty() { 0 } else { 2 })
     }
 
     async fn extract_archive(
@@ -538,11 +208,10 @@ impl TarCommand {
         specific_files: &[String],
         exclude: &[String],
     ) -> CommandResult {
-        let parsed_entries =
-            match read_archive(ctx, &opts.file, opts.gzip).await {
-                Ok(e) => e,
-                Err(r) => return r,
-            };
+        let parsed_entries = match read_archive(ctx, &opts.file, opts.gzip).await {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
 
         let work_dir = if let Some(ref dir) = opts.directory {
             ctx.fs.resolve_path(&ctx.cwd, dir)
@@ -579,9 +248,7 @@ impl TarCommand {
             // Check if this file should be extracted
             if !specific_files.is_empty() {
                 let matches = specific_files.iter().any(|f| {
-                    name == *f
-                        || display_name == f.as_str()
-                        || name.starts_with(&format!("{}/", f))
+                    name == *f || display_name == f.as_str() || name.starts_with(&format!("{}/", f))
                 });
                 if !matches {
                     continue;
@@ -601,10 +268,7 @@ impl TarCommand {
                 }
                 if let Err(e) = ctx
                     .fs
-                    .mkdir(
-                        &target_path,
-                        &MkdirOptions { recursive: true },
-                    )
+                    .mkdir(&target_path, &MkdirOptions { recursive: true })
                     .await
                 {
                     errors.push(format!("tar: {}: {}", name, e));
@@ -616,9 +280,7 @@ impl TarCommand {
             } else {
                 // Handle -O (extract to stdout)
                 if opts.to_stdout {
-                    stdout_content.push_str(
-                        &String::from_utf8_lossy(&entry.content),
-                    );
+                    stdout_content.push_str(&String::from_utf8_lossy(&entry.content));
                     if opts.verbose {
                         verbose_output.push_str(&format!("{}\n", name));
                     }
@@ -629,10 +291,8 @@ impl TarCommand {
                 if opts.keep_old_files {
                     if ctx.fs.stat(&target_path).await.is_ok() {
                         if opts.verbose {
-                            verbose_output.push_str(&format!(
-                                "{}: not overwritten, file exists\n",
-                                name
-                            ));
+                            verbose_output
+                                .push_str(&format!("{}: not overwritten, file exists\n", name));
                         }
                         continue;
                     }
@@ -644,27 +304,19 @@ impl TarCommand {
                     if !parent.is_empty() {
                         let _ = ctx
                             .fs
-                            .mkdir(
-                                parent,
-                                &MkdirOptions { recursive: true },
-                            )
+                            .mkdir(parent, &MkdirOptions { recursive: true })
                             .await;
                     }
                 }
 
-                if let Err(e) = ctx
-                    .fs
-                    .write_file(&target_path, &entry.content)
-                    .await
-                {
+                if let Err(e) = ctx.fs.write_file(&target_path, &entry.content).await {
                     errors.push(format!("tar: {}: {}", name, e));
                     continue;
                 }
 
                 // Preserve permissions
                 if opts.preserve {
-                    let _ =
-                        ctx.fs.chmod(&target_path, entry.mode).await;
+                    let _ = ctx.fs.chmod(&target_path, entry.mode).await;
                 }
 
                 if opts.verbose {
@@ -692,11 +344,10 @@ impl TarCommand {
         specific_files: &[String],
         exclude: &[String],
     ) -> CommandResult {
-        let parsed_entries =
-            match read_archive(ctx, &opts.file, opts.gzip).await {
-                Ok(e) => e,
-                Err(r) => return r,
-            };
+        let parsed_entries = match read_archive(ctx, &opts.file, opts.gzip).await {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
 
         let mut stdout = String::new();
 
@@ -715,9 +366,7 @@ impl TarCommand {
             // Check if this file should be listed
             if !specific_files.is_empty() {
                 let matches = specific_files.iter().any(|f| {
-                    name == *f
-                        || display_name == f.as_str()
-                        || name.starts_with(&format!("{}/", f))
+                    name == *f || display_name == f.as_str() || name.starts_with(&format!("{}/", f))
                 });
                 if !matches {
                     continue;
@@ -730,18 +379,10 @@ impl TarCommand {
             }
 
             if opts.verbose {
-                let mode_str =
-                    format_mode(entry.mode, entry.is_directory);
-                let size = if entry.is_directory {
-                    0
-                } else {
-                    entry.size
-                };
+                let mode_str = format_mode(entry.mode, entry.is_directory);
+                let size = if entry.is_directory { 0 } else { entry.size };
                 let date = format_mtime(entry.mtime);
-                stdout.push_str(&format!(
-                    "{} 0/0 {:>8} {} {}\n",
-                    mode_str, size, date, name
-                ));
+                stdout.push_str(&format!("{} 0/0 {:>8} {} {}\n", mode_str, size, date, name));
             } else {
                 stdout.push_str(&format!("{}\n", name));
             }
@@ -768,18 +409,16 @@ impl TarCommand {
         if files.is_empty() {
             return CommandResult::with_exit_code(
                 String::new(),
-                "tar: Cowardly refusing to append nothing to archive\n"
-                    .to_string(),
+                "tar: Cowardly refusing to append nothing to archive\n".to_string(),
                 2,
             );
         }
 
         // Read existing archive
-        let existing_entries =
-            match read_archive(ctx, &opts.file, false).await {
-                Ok(e) => e,
-                Err(r) => return r,
-            };
+        let existing_entries = match read_archive(ctx, &opts.file, false).await {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
 
         let work_dir = if let Some(ref dir) = opts.directory {
             ctx.fs.resolve_path(&ctx.cwd, dir)
@@ -794,24 +433,15 @@ impl TarCommand {
 
         for file in files {
             let mut entries = Vec::new();
-            let errors = collect_files(
-                &ctx.fs,
-                &work_dir,
-                file,
-                exclude,
-                &mut entries,
-            )
-            .await;
+            let errors = collect_files(&ctx.fs, &work_dir, file, exclude, &mut entries).await;
             all_errors.extend(errors);
 
             if opts.verbose {
                 for entry in &entries {
                     if entry.is_directory {
-                        verbose_output
-                            .push_str(&format!("{}/\n", entry.path));
+                        verbose_output.push_str(&format!("{}/\n", entry.path));
                     } else {
-                        verbose_output
-                            .push_str(&format!("{}\n", entry.path));
+                        verbose_output.push_str(&format!("{}\n", entry.path));
                     }
                 }
             }
@@ -829,14 +459,8 @@ impl TarCommand {
         // Write archive
         let f = opts.file.as_ref().unwrap();
         let archive_path = ctx.fs.resolve_path(&ctx.cwd, f);
-        if let Err(e) =
-            ctx.fs.write_file(&archive_path, &archive_data).await
-        {
-            return CommandResult::with_exit_code(
-                String::new(),
-                format!("tar: {}: {}\n", f, e),
-                2,
-            );
+        if let Err(e) = ctx.fs.write_file(&archive_path, &archive_data).await {
+            return CommandResult::with_exit_code(String::new(), format!("tar: {}: {}\n", f, e), 2);
         }
 
         let mut stderr = verbose_output;
@@ -869,25 +493,22 @@ impl TarCommand {
         if files.is_empty() {
             return CommandResult::with_exit_code(
                 String::new(),
-                "tar: Cowardly refusing to update with nothing\n"
-                    .to_string(),
+                "tar: Cowardly refusing to update with nothing\n".to_string(),
                 2,
             );
         }
 
         // Read existing archive
-        let existing_entries =
-            match read_archive(ctx, &opts.file, false).await {
-                Ok(e) => e,
-                Err(r) => return r,
-            };
+        let existing_entries = match read_archive(ctx, &opts.file, false).await {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
 
         // Build mtime map from existing entries
         let mut existing_mtimes: std::collections::HashMap<String, u64> =
             std::collections::HashMap::new();
         for entry in &existing_entries {
-            existing_mtimes
-                .insert(entry.path.clone(), entry.mtime);
+            existing_mtimes.insert(entry.path.clone(), entry.mtime);
         }
 
         let work_dir = if let Some(ref dir) = opts.directory {
@@ -903,34 +524,18 @@ impl TarCommand {
 
         for file in files {
             let mut entries = Vec::new();
-            let errors = collect_files(
-                &ctx.fs,
-                &work_dir,
-                file,
-                exclude,
-                &mut entries,
-            )
-            .await;
+            let errors = collect_files(&ctx.fs, &work_dir, file, exclude, &mut entries).await;
             all_errors.extend(errors);
 
             for entry in entries {
-                let existing_mtime =
-                    existing_mtimes.get(&entry.path).copied();
+                let existing_mtime = existing_mtimes.get(&entry.path).copied();
                 // Only include if it doesn't exist in archive or is newer
-                if existing_mtime.is_none()
-                    || entry.mtime > existing_mtime.unwrap()
-                {
+                if existing_mtime.is_none() || entry.mtime > existing_mtime.unwrap() {
                     if opts.verbose {
                         if entry.is_directory {
-                            verbose_output.push_str(&format!(
-                                "{}/\n",
-                                entry.path
-                            ));
+                            verbose_output.push_str(&format!("{}/\n", entry.path));
                         } else {
-                            verbose_output.push_str(&format!(
-                                "{}\n",
-                                entry.path
-                            ));
+                            verbose_output.push_str(&format!("{}\n", entry.path));
                         }
                     }
                     newer_entries.push(entry);
@@ -941,8 +546,7 @@ impl TarCommand {
         if newer_entries.is_empty() {
             let mut stderr = String::new();
             if !all_errors.is_empty() {
-                stderr =
-                    format!("{}\n", all_errors.join("\n"));
+                stderr = format!("{}\n", all_errors.join("\n"));
             }
             return CommandResult::with_exit_code(
                 String::new(),
@@ -966,14 +570,8 @@ impl TarCommand {
         // Write archive
         let f = opts.file.as_ref().unwrap();
         let archive_path = ctx.fs.resolve_path(&ctx.cwd, f);
-        if let Err(e) =
-            ctx.fs.write_file(&archive_path, &archive_data).await
-        {
-            return CommandResult::with_exit_code(
-                String::new(),
-                format!("tar: {}: {}\n", f, e),
-                2,
-            );
+        if let Err(e) = ctx.fs.write_file(&archive_path, &archive_data).await {
+            return CommandResult::with_exit_code(String::new(), format!("tar: {}: {}\n", f, e), 2);
         }
 
         let mut stderr = verbose_output;
@@ -991,24 +589,21 @@ impl TarCommand {
 
 #[cfg(test)]
 mod tests {
+    use super::archive::is_gzip;
+    use super::helpers::{format_mode, matches_exclude, strip_components};
     use super::*;
+    use crate::commands::find::matcher::glob_match;
     use crate::fs::InMemoryFs;
     use std::collections::HashMap;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &[u8])>,
-    ) -> CommandContext {
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &[u8])>) -> CommandContext {
         let fs = Arc::new(InMemoryFs::new());
         for (path, content) in files {
             // Ensure parent directories exist
             if let Some(pos) = path.rfind('/') {
                 let parent = &path[..pos];
                 if !parent.is_empty() {
-                    let _ = fs
-                        .mkdir(parent, &MkdirOptions { recursive: true })
-                        .await;
+                    let _ = fs.mkdir(parent, &MkdirOptions { recursive: true }).await;
                 }
             }
             fs.write_file(path, content).await.unwrap();
@@ -1034,7 +629,7 @@ mod tests {
         make_ctx(args, stdin, byte_files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_tar_single_file() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "hello.txt"],
@@ -1053,7 +648,7 @@ mod tests {
         assert_eq!(entries[0].content, b"Hello, World!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_tar_directory_tree() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "project"],
@@ -1073,7 +668,7 @@ mod tests {
         assert!(entries[0].is_directory);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_tar_to_filesystem() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "hello.txt"],
@@ -1104,7 +699,7 @@ mod tests {
         assert_eq!(content, "Hello, World!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_and_extract_round_trip() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "a.txt", "b.txt"],
@@ -1135,7 +730,7 @@ mod tests {
         assert_eq!(fs.read_file("/out/b.txt").await.unwrap(), "bbb");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_tar_gz() {
         let ctx = make_ctx_str(
             vec!["-czf", "archive.tar.gz", "hello.txt"],
@@ -1150,7 +745,7 @@ mod tests {
         assert!(is_gzip(&data));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_tar_gz() {
         let ctx = make_ctx_str(
             vec!["-czf", "archive.tar.gz", "hello.txt"],
@@ -1183,7 +778,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_list_archive_contents() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "a.txt", "b.txt"],
@@ -1209,7 +804,7 @@ mod tests {
         assert!(result.stdout.contains("b.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_list_verbose_output() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "hello.txt"],
@@ -1221,10 +816,7 @@ mod tests {
         TarCommand.execute(ctx).await;
 
         let ctx2 = CommandContext {
-            args: vec![
-                "-tvf".to_string(),
-                "archive.tar".to_string(),
-            ],
+            args: vec!["-tvf".to_string(), "archive.tar".to_string()],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -1239,7 +831,7 @@ mod tests {
         assert!(result.stdout.contains("-r"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_auto_compress_from_extension() {
         let ctx = make_ctx_str(
             vec!["-acf", "archive.tar.gz", "hello.txt"],
@@ -1254,16 +846,10 @@ mod tests {
         assert!(is_gzip(&data));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exclude_patterns() {
         let ctx = make_ctx_str(
-            vec![
-                "--exclude=*.log",
-                "-cf",
-                "archive.tar",
-                "a.txt",
-                "b.log",
-            ],
+            vec!["--exclude=*.log", "-cf", "archive.tar", "a.txt", "b.log"],
             "",
             vec![("/a.txt", "aaa"), ("/b.log", "bbb")],
         )
@@ -1277,7 +863,7 @@ mod tests {
         assert_eq!(entries[0].path, "a.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_strip_components_on_extract() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "dir"],
@@ -1305,13 +891,10 @@ mod tests {
         };
         let result = TarCommand.execute(ctx2).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(
-            fs.read_file("/out/file.txt").await.unwrap(),
-            "content"
-        );
+        assert_eq!(fs.read_file("/out/file.txt").await.unwrap(), "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_to_stdout() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "hello.txt"],
@@ -1323,10 +906,7 @@ mod tests {
         TarCommand.execute(ctx).await;
 
         let ctx2 = CommandContext {
-            args: vec![
-                "-xOf".to_string(),
-                "archive.tar".to_string(),
-            ],
+            args: vec!["-xOf".to_string(), "archive.tar".to_string()],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -1339,7 +919,7 @@ mod tests {
         assert_eq!(result.stdout, "Hello, World!");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_keep_old_files() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "hello.txt"],
@@ -1370,13 +950,10 @@ mod tests {
         };
         let result = TarCommand.execute(ctx2).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(
-            fs.read_file("/out/hello.txt").await.unwrap(),
-            "old content"
-        );
+        assert_eq!(fs.read_file("/out/hello.txt").await.unwrap(), "old content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_change_directory() {
         let ctx = make_ctx_str(
             vec!["-cf", "/archive.tar", "-C", "/src", "hello.txt"],
@@ -1393,7 +970,7 @@ mod tests {
         assert_eq!(entries[0].path, "hello.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_to_archive() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "a.txt"],
@@ -1428,7 +1005,7 @@ mod tests {
         assert_eq!(entries[1].path, "b.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_update_archive() {
         // Create initial archive with a file
         let ctx = make_ctx_str(
@@ -1469,7 +1046,7 @@ mod tests {
         assert_eq!(b_entry.content, b"new_file");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_files_from() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "-T", "filelist.txt"],
@@ -1489,7 +1066,7 @@ mod tests {
         assert_eq!(entries.len(), 2);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_verbose_output_during_create() {
         let ctx = make_ctx_str(
             vec!["-cvf", "archive.tar", "hello.txt"],
@@ -1502,20 +1079,15 @@ mod tests {
         assert!(result.stderr.contains("hello.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_missing_archive_file_error() {
-        let ctx = make_ctx_str(
-            vec!["-xf", "nonexistent.tar"],
-            "",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx_str(vec!["-xf", "nonexistent.tar"], "", vec![]).await;
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("Cannot open"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_directory_in_archive() {
         let fs = Arc::new(InMemoryFs::new());
         fs.mkdir("/emptydir", &MkdirOptions { recursive: true })
@@ -1542,12 +1114,10 @@ mod tests {
         assert!(entries[0].is_directory);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_preserve_permissions() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/script.sh", b"#!/bin/bash")
-            .await
-            .unwrap();
+        fs.write_file("/script.sh", b"#!/bin/bash").await.unwrap();
         fs.chmod("/script.sh", 0o755).await.unwrap();
 
         let ctx = CommandContext {
@@ -1585,58 +1155,37 @@ mod tests {
         assert_eq!(stat.mode, 0o755);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_no_operation_error() {
-        let ctx = make_ctx_str(
-            vec!["-f", "archive.tar"],
-            "",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx_str(vec!["-f", "archive.tar"], "", vec![]).await;
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("You must specify"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_empty_archive_error() {
-        let ctx = make_ctx_str(
-            vec!["-cf", "archive.tar"],
-            "",
-            vec![],
-        )
-        .await;
+        let ctx = make_ctx_str(vec!["-cf", "archive.tar"], "", vec![]).await;
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("Cowardly refusing"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_requires_file() {
-        let ctx = make_ctx_str(
-            vec!["-r", "a.txt"],
-            "",
-            vec![("/a.txt", "aaa")],
-        )
-        .await;
+        let ctx = make_ctx_str(vec!["-r", "a.txt"], "", vec![("/a.txt", "aaa")]).await;
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("Cannot append"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_create_to_stdout() {
-        let ctx = make_ctx_str(
-            vec!["-c", "hello.txt"],
-            "",
-            vec![("/hello.txt", "Hello!")],
-        )
-        .await;
+        let ctx = make_ctx_str(vec!["-c", "hello.txt"], "", vec![("/hello.txt", "Hello!")]).await;
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert!(!result.stdout.is_empty());
-        let bytes: Vec<u8> =
-            result.stdout.chars().map(|c| c as u8).collect();
+        let bytes: Vec<u8> = result.stdout.chars().map(|c| c as u8).collect();
         let entries = parse_archive(&bytes).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "hello.txt");
@@ -1678,7 +1227,7 @@ mod tests {
     }
 
     // Binary data tests
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_binary_file_with_high_bytes() {
         let ctx = make_ctx(
             vec!["-cf", "archive.tar", "binary.bin"],
@@ -1710,7 +1259,7 @@ mod tests {
         assert_eq!(data, vec![0x80, 0x90, 0xa0, 0xb0, 0xff]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_binary_file_with_null_bytes() {
         let ctx = make_ctx(
             vec!["-cf", "archive.tar", "nulls.bin"],
@@ -1742,7 +1291,7 @@ mod tests {
         assert_eq!(data, vec![0x41, 0x00, 0x42, 0x00, 0x43]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_binary_file_all_byte_values() {
         let all_bytes: Vec<u8> = (0..=255).collect();
         let ctx = make_ctx(
@@ -1778,7 +1327,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_list_archive_from_stdin() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "file.txt"],
@@ -1790,8 +1339,7 @@ mod tests {
         TarCommand.execute(ctx).await;
 
         let archive_data = fs.read_file_buffer("/archive.tar").await.unwrap();
-        let stdin_str: String =
-            archive_data.iter().map(|&b| b as char).collect();
+        let stdin_str: String = archive_data.iter().map(|&b| b as char).collect();
 
         let ctx2 = CommandContext {
             args: vec!["-t".to_string()],
@@ -1807,7 +1355,7 @@ mod tests {
         assert!(result.stdout.contains("file.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_archive_from_stdin() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "data.txt"],
@@ -1819,15 +1367,10 @@ mod tests {
         TarCommand.execute(ctx).await;
 
         let archive_data = fs.read_file_buffer("/archive.tar").await.unwrap();
-        let stdin_str: String =
-            archive_data.iter().map(|&b| b as char).collect();
+        let stdin_str: String = archive_data.iter().map(|&b| b as char).collect();
 
         let ctx2 = CommandContext {
-            args: vec![
-                "-x".to_string(),
-                "-C".to_string(),
-                "/dest".to_string(),
-            ],
+            args: vec!["-x".to_string(), "-C".to_string(), "/dest".to_string()],
             stdin: stdin_str,
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -1842,7 +1385,7 @@ mod tests {
         assert_eq!(content, "hello world");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_gzip_archive_from_stdin() {
         let ctx = make_ctx_str(
             vec!["-czf", "archive.tar.gz", "file.txt"],
@@ -1853,17 +1396,11 @@ mod tests {
         let fs = ctx.fs.clone();
         TarCommand.execute(ctx).await;
 
-        let archive_data =
-            fs.read_file_buffer("/archive.tar.gz").await.unwrap();
-        let stdin_str: String =
-            archive_data.iter().map(|&b| b as char).collect();
+        let archive_data = fs.read_file_buffer("/archive.tar.gz").await.unwrap();
+        let stdin_str: String = archive_data.iter().map(|&b| b as char).collect();
 
         let ctx2 = CommandContext {
-            args: vec![
-                "-xz".to_string(),
-                "-C".to_string(),
-                "/dest".to_string(),
-            ],
+            args: vec!["-xz".to_string(), "-C".to_string(), "/dest".to_string()],
             stdin: stdin_str,
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -1878,7 +1415,7 @@ mod tests {
         assert_eq!(content, "compressed content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_utf8_text_archive() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "unicode.txt"],
@@ -1910,7 +1447,7 @@ mod tests {
         assert_eq!(content, "Hello World 你好世界");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_special_characters_in_filename() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "file-name_123.txt"],
@@ -1935,7 +1472,7 @@ mod tests {
         assert!(result.stdout.contains("file-name_123.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_specific_file_by_pattern() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "dir"],
@@ -1973,7 +1510,7 @@ mod tests {
         assert!(fs.read_file("/dest/dir/file2.txt").await.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_extract_directory_by_pattern() {
         let ctx = make_ctx_str(
             vec!["-cf", "archive.tar", "project"],
@@ -2008,13 +1545,10 @@ mod tests {
 
         let main = fs.read_file("/dest/project/src/main.js").await.unwrap();
         assert_eq!(main, "main");
-        assert!(fs
-            .read_file("/dest/project/docs/readme.md")
-            .await
-            .is_err());
+        assert!(fs.read_file("/dest/project/docs/readme.md").await.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_round_trip_directory_with_gzip() {
         let ctx = make_ctx_str(
             vec!["-czvf", "backup.tar.gz", "project"],
@@ -2023,10 +1557,7 @@ mod tests {
                 ("/project/src/main.js", "console.log('hello');"),
                 ("/project/src/utils.js", "export const helper = () => {};"),
                 ("/project/package.json", r#"{"name": "test"}"#),
-                (
-                    "/project/README.md",
-                    "# Project\n\nThis is a test project.",
-                ),
+                ("/project/README.md", "# Project\n\nThis is a test project."),
             ],
         )
         .await;
@@ -2051,20 +1582,14 @@ mod tests {
         let result = TarCommand.execute(ctx2).await;
         assert_eq!(result.exit_code, 0);
 
-        let main = fs
-            .read_file("/restore/project/src/main.js")
-            .await
-            .unwrap();
+        let main = fs.read_file("/restore/project/src/main.js").await.unwrap();
         assert_eq!(main, "console.log('hello');");
 
-        let pkg = fs
-            .read_file("/restore/project/package.json")
-            .await
-            .unwrap();
+        let pkg = fs.read_file("/restore/project/package.json").await.unwrap();
         assert_eq!(pkg, r#"{"name": "test"}"#);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_binary_stdin_gzip_archive() {
         let ctx = make_ctx_str(
             vec!["-czf", "test.tar.gz", "data.txt"],
@@ -2090,15 +1615,10 @@ mod tests {
         assert!(result.stdout.contains("data.txt"));
 
         let archive_data = fs.read_file_buffer("/test.tar.gz").await.unwrap();
-        let stdin_str: String =
-            archive_data.iter().map(|&b| b as char).collect();
+        let stdin_str: String = archive_data.iter().map(|&b| b as char).collect();
 
         let ctx3 = CommandContext {
-            args: vec![
-                "-xz".to_string(),
-                "-C".to_string(),
-                "/dest".to_string(),
-            ],
+            args: vec!["-xz".to_string(), "-C".to_string(), "/dest".to_string()],
             stdin: stdin_str,
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -2113,7 +1633,7 @@ mod tests {
         assert_eq!(content, "Hello World");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_large_directory_tree() {
         let owned_files: Vec<(String, String)> = (0..50)
             .map(|i| {
@@ -2129,9 +1649,7 @@ mod tests {
             .map(|(p, c)| (p.as_str(), c.as_str()))
             .collect();
 
-        let ctx =
-            make_ctx_str(vec!["-cf", "archive.tar", "bigdir"], "", file_refs)
-                .await;
+        let ctx = make_ctx_str(vec!["-cf", "archive.tar", "bigdir"], "", file_refs).await;
         let fs = ctx.fs.clone();
         let result = TarCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);

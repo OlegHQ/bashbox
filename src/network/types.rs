@@ -81,7 +81,10 @@ pub enum NetworkError {
     /// Redirect target not in allow-list
     RedirectNotAllowed { url: String },
     /// HTTP method not allowed
-    MethodNotAllowed { method: String, allowed: Vec<String> },
+    MethodNotAllowed {
+        method: String,
+        allowed: Vec<String>,
+    },
     /// Fetch operation failed
     FetchError { message: String },
 }

@@ -1,6 +1,7 @@
 // src/commands/join/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::{invalid_option_line, wants_help};
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct JoinCommand;
 
@@ -172,10 +173,7 @@ fn parse_args(args: &[String]) -> Result<(JoinOptions, Vec<String>), String> {
             if i >= args.len() {
                 return Err("join: option requires an argument -- 't'".to_string());
             }
-            let ch = args[i]
-                .chars()
-                .next()
-                .ok_or("join: empty separator")?;
+            let ch = args[i].chars().next().ok_or("join: empty separator")?;
             opts.separator = Some(ch);
         } else if arg.starts_with("-t") && arg.len() > 2 {
             let ch = arg[2..].chars().next().unwrap();
@@ -225,7 +223,7 @@ fn parse_args(args: &[String]) -> Result<(JoinOptions, Vec<String>), String> {
         } else if arg == "--help" {
             // handled before parse_args
         } else if arg.starts_with('-') && arg != "-" {
-            return Err(format!("join: invalid option -- '{}'", &arg[1..]));
+            return Err(invalid_option_line("join", &arg[1..]));
         } else {
             files.push(arg.clone());
         }
@@ -242,7 +240,7 @@ impl Command for JoinCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: join [OPTION]... FILE1 FILE2\n\n\
                  For each pair of input lines with identical join fields, write a line to\n\
@@ -272,22 +270,23 @@ impl Command for JoinCommand {
             );
         }
 
-        let read_file = |path: &str, stdin: &str, fs: &std::sync::Arc<dyn crate::fs::FileSystem>, cwd: &str| {
-            let path = path.to_string();
-            let stdin = stdin.to_string();
-            let fs = fs.clone();
-            let cwd = cwd.to_string();
-            async move {
-                if path == "-" {
-                    Ok(stdin)
-                } else {
-                    let resolved = fs.resolve_path(&cwd, &path);
-                    fs.read_file(&resolved).await.map_err(|_| {
-                        format!("join: {}: No such file or directory", path)
-                    })
+        let read_file =
+            |path: &str, stdin: &str, fs: &std::sync::Arc<dyn crate::fs::FileSystem>, cwd: &str| {
+                let path = path.to_string();
+                let stdin = stdin.to_string();
+                let fs = fs.clone();
+                let cwd = cwd.to_string();
+                async move {
+                    if path == "-" {
+                        Ok(stdin)
+                    } else {
+                        let resolved = fs.resolve_path(&cwd, &path);
+                        fs.read_file(&resolved)
+                            .await
+                            .map_err(|_| format!("join: {}: No such file or directory", path))
+                    }
                 }
-            }
-        };
+            };
 
         let content1 = match read_file(&files[0], &ctx.stdin, &ctx.fs, &ctx.cwd).await {
             Ok(c) => c,
@@ -301,8 +300,14 @@ impl Command for JoinCommand {
         let lines1: Vec<&str> = content1.lines().collect();
         let lines2: Vec<&str> = content2.lines().collect();
 
-        let parsed1: Vec<Vec<String>> = lines1.iter().map(|l| split_fields(l, opts.separator)).collect();
-        let parsed2: Vec<Vec<String>> = lines2.iter().map(|l| split_fields(l, opts.separator)).collect();
+        let parsed1: Vec<Vec<String>> = lines1
+            .iter()
+            .map(|l| split_fields(l, opts.separator))
+            .collect();
+        let parsed2: Vec<Vec<String>> = lines2
+            .iter()
+            .map(|l| split_fields(l, opts.separator))
+            .collect();
 
         let suppress_paired = opts.only_unpairable1 || opts.only_unpairable2;
 
@@ -379,32 +384,14 @@ impl Command for JoinCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::commands::test_utils::*;
     use crate::fs::types::FileSystem;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &str)>) -> CommandContext {
+        make_ctx_with_stdin_and_files(args, stdin, files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_basic() {
         let ctx = make_ctx(
             vec!["/file1.txt", "/file2.txt"],
@@ -422,7 +409,7 @@ mod tests {
         assert!(result.stdout.contains("3 cherry red"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_only_matching() {
         let ctx = make_ctx(
             vec!["/file1.txt", "/file2.txt"],
@@ -440,7 +427,7 @@ mod tests {
         assert!(!result.stdout.contains("3"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_custom_field() {
         let ctx = make_ctx(
             vec!["-1", "2", "-2", "1", "/file1.txt", "/file2.txt"],
@@ -457,7 +444,7 @@ mod tests {
         assert!(result.stdout.contains("2 banana yellow"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_custom_separator() {
         let ctx = make_ctx(
             vec!["-t:", "/file1.txt", "/file2.txt"],
@@ -473,7 +460,7 @@ mod tests {
         assert!(result.stdout.contains("1:apple:red"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_left_outer_a1() {
         let ctx = make_ctx(
             vec!["-a1", "/file1.txt", "/file2.txt"],
@@ -491,7 +478,7 @@ mod tests {
         assert!(result.stdout.contains("2 banana"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_right_outer_a2() {
         let ctx = make_ctx(
             vec!["-a2", "/file1.txt", "/file2.txt"],
@@ -509,7 +496,7 @@ mod tests {
         assert!(result.stdout.contains("2 yellow"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_anti_v1() {
         let ctx = make_ctx(
             vec!["-v1", "/file1.txt", "/file2.txt"],
@@ -527,10 +514,18 @@ mod tests {
         assert!(!result.stdout.contains("3 cherry green"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_empty_replacement() {
         let ctx = make_ctx(
-            vec!["-a1", "-e", "EMPTY", "-o", "1.1,1.2,2.2", "/file1.txt", "/file2.txt"],
+            vec![
+                "-a1",
+                "-e",
+                "EMPTY",
+                "-o",
+                "1.1,1.2,2.2",
+                "/file1.txt",
+                "/file2.txt",
+            ],
             "",
             vec![
                 ("/file1.txt", "1 apple\n2 banana\n"),
@@ -544,7 +539,7 @@ mod tests {
         assert!(result.stdout.contains("2 banana EMPTY"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_ignore_case() {
         let ctx = make_ctx(
             vec!["-i", "/file1.txt", "/file2.txt"],
@@ -561,19 +556,14 @@ mod tests {
         assert!(result.stdout.contains("world bar"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_missing_file() {
-        let ctx = make_ctx(
-            vec!["/file1.txt"],
-            "",
-            vec![("/file1.txt", "1 apple\n")],
-        )
-        .await;
+        let ctx = make_ctx(vec!["/file1.txt"], "", vec![("/file1.txt", "1 apple\n")]).await;
         let result = JoinCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_no_matches() {
         let ctx = make_ctx(
             vec!["/file1.txt", "/file2.txt"],
@@ -589,15 +579,12 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_many_to_many() {
         let ctx = make_ctx(
             vec!["/file1.txt", "/file2.txt"],
             "",
-            vec![
-                ("/file1.txt", "1 a\n1 b\n"),
-                ("/file2.txt", "1 x\n1 y\n"),
-            ],
+            vec![("/file1.txt", "1 a\n1 b\n"), ("/file2.txt", "1 x\n1 y\n")],
         )
         .await;
         let result = JoinCommand.execute(ctx).await;
@@ -608,7 +595,7 @@ mod tests {
         assert!(result.stdout.contains("1 b y"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_stdin() {
         let ctx = make_ctx(
             vec!["-", "/file2.txt"],
@@ -622,7 +609,7 @@ mod tests {
         assert!(result.stdout.contains("2 banana yellow"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_full_outer() {
         let ctx = make_ctx(
             vec!["-a", "1", "-a", "2", "/file1.txt", "/file2.txt"],
@@ -640,7 +627,7 @@ mod tests {
         assert!(result.stdout.contains("3 red"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_output_format() {
         let ctx = make_ctx(
             vec!["-o", "1.2,2.2", "/file1.txt", "/file2.txt"],
@@ -657,15 +644,12 @@ mod tests {
         assert!(result.stdout.contains("banana fruit"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_output_format_with_key() {
         let ctx = make_ctx(
             vec!["-o", "1.0,1.2,2.2", "/file1.txt", "/file2.txt"],
             "",
-            vec![
-                ("/file1.txt", "key val1\n"),
-                ("/file2.txt", "key val2\n"),
-            ],
+            vec![("/file1.txt", "key val1\n"), ("/file2.txt", "key val2\n")],
         )
         .await;
         let result = JoinCommand.execute(ctx).await;
@@ -673,7 +657,7 @@ mod tests {
         assert!(result.stdout.contains("key val1 val2"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_colon_separator() {
         let ctx = make_ctx(
             vec!["-t", ":", "/file1.txt", "/file2.txt"],
@@ -690,7 +674,7 @@ mod tests {
         assert!(result.stdout.contains("root:0:root:active"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_anti_v2() {
         let ctx = make_ctx(
             vec!["-v", "2", "/file1.txt", "/file2.txt"],
@@ -707,15 +691,12 @@ mod tests {
         assert!(!result.stdout.contains("1 apple red"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_empty_files() {
         let ctx = make_ctx(
             vec!["/file1.txt", "/file2.txt"],
             "",
-            vec![
-                ("/file1.txt", ""),
-                ("/file2.txt", "1 x\n"),
-            ],
+            vec![("/file1.txt", ""), ("/file2.txt", "1 x\n")],
         )
         .await;
         let result = JoinCommand.execute(ctx).await;
@@ -723,7 +704,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_help() {
         let ctx = make_ctx(vec!["--help"], "", vec![]).await;
         let result = JoinCommand.execute(ctx).await;
@@ -732,15 +713,12 @@ mod tests {
         assert!(result.stdout.contains("FILE1 FILE2"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_join_invalid_field_number() {
         let ctx = make_ctx(
             vec!["-1", "0", "/file1.txt", "/file2.txt"],
             "",
-            vec![
-                ("/file1.txt", "a\n"),
-                ("/file2.txt", "b\n"),
-            ],
+            vec![("/file1.txt", "a\n"), ("/file2.txt", "b\n")],
         )
         .await;
         let result = JoinCommand.execute(ctx).await;

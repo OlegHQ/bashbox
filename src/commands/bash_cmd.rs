@@ -1,14 +1,18 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct BashCommand;
 
 #[async_trait]
 impl Command for BashCommand {
-    fn name(&self) -> &'static str { "bash" }
+    fn name(&self) -> &'static str {
+        "bash"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "bash - execute shell commands or scripts\n\nUsage: bash [OPTIONS] [SCRIPT_FILE] [ARGUMENTS...]\n\nOptions:\n  -c COMMAND  execute COMMAND string\n".to_string()
             );
@@ -16,12 +20,20 @@ impl Command for BashCommand {
 
         let exec_fn = match &ctx.exec_fn {
             Some(f) => f.clone(),
-            None => return CommandResult::error("bash: internal error: exec function not available\n".to_string()),
+            None => {
+                return CommandResult::error(
+                    "bash: internal error: exec function not available\n".to_string(),
+                )
+            }
         };
 
         if ctx.args.len() >= 2 && ctx.args[0] == "-c" {
             let command = &ctx.args[1];
-            let script_name = ctx.args.get(2).cloned().unwrap_or_else(|| "bash".to_string());
+            let script_name = ctx
+                .args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| "bash".to_string());
             let script_args: Vec<_> = ctx.args.iter().skip(3).cloned().collect();
             return execute_script(command, &script_name, &script_args, &ctx, exec_fn).await;
         }
@@ -39,11 +51,9 @@ impl Command for BashCommand {
 
         match ctx.fs.read_file(&full_path).await {
             Ok(content) => execute_script(&content, script_path, &script_args, &ctx, exec_fn).await,
-            Err(_) => CommandResult::with_exit_code(
-                String::new(),
-                format!("bash: {}: No such file or directory\n", script_path),
-                127,
-            ),
+            Err(_) => {
+                CommandResult::with_exit_code(String::new(), no_such_file("bash", script_path), 127)
+            }
         }
     }
 }
@@ -71,17 +81,26 @@ async fn execute_script(
         }
     }
 
-    exec_fn(script_to_run, ctx.stdin.clone(), ctx.cwd.clone(), env, ctx.fs.clone()).await
+    exec_fn(
+        script_to_run,
+        ctx.stdin.clone(),
+        ctx.cwd.clone(),
+        env,
+        ctx.fs.clone(),
+    )
+    .await
 }
 
 pub struct ShCommand;
 
 #[async_trait]
 impl Command for ShCommand {
-    fn name(&self) -> &'static str { "sh" }
+    fn name(&self) -> &'static str {
+        "sh"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "sh - execute shell commands or scripts (POSIX shell)\n\nUsage: sh [OPTIONS] [SCRIPT_FILE] [ARGUMENTS...]\n\nOptions:\n  -c COMMAND  execute COMMAND string\n".to_string()
             );
@@ -89,7 +108,11 @@ impl Command for ShCommand {
 
         let exec_fn = match &ctx.exec_fn {
             Some(f) => f.clone(),
-            None => return CommandResult::error("sh: internal error: exec function not available\n".to_string()),
+            None => {
+                return CommandResult::error(
+                    "sh: internal error: exec function not available\n".to_string(),
+                )
+            }
         };
 
         if ctx.args.len() >= 2 && ctx.args[0] == "-c" {
@@ -112,11 +135,9 @@ impl Command for ShCommand {
 
         match ctx.fs.read_file(&full_path).await {
             Ok(content) => execute_script(&content, script_path, &script_args, &ctx, exec_fn).await,
-            Err(_) => CommandResult::with_exit_code(
-                String::new(),
-                format!("sh: {}: No such file or directory\n", script_path),
-                127,
-            ),
+            Err(_) => {
+                CommandResult::with_exit_code(String::new(), no_such_file("sh", script_path), 127)
+            }
         }
     }
 }
@@ -124,9 +145,9 @@ impl Command for ShCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -140,7 +161,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = BashCommand.execute(ctx).await;
@@ -148,7 +169,7 @@ mod tests {
         assert!(result.stdout.contains("-c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sh_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = ShCommand.execute(ctx).await;
@@ -156,21 +177,21 @@ mod tests {
         assert!(result.stdout.contains("-c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_no_exec_fn() {
         let ctx = create_ctx(vec!["-c", "echo hello"]);
         let result = BashCommand.execute(ctx).await;
         assert!(result.stderr.contains("internal error"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sh_no_exec_fn() {
         let ctx = create_ctx(vec!["-c", "echo hello"]);
         let result = ShCommand.execute(ctx).await;
         assert!(result.stderr.contains("internal error"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_empty_no_stdin() {
         let mut ctx = create_ctx(vec![]);
         ctx.exec_fn = Some(Arc::new(|_, _, _, _, _| {
@@ -181,7 +202,7 @@ mod tests {
         assert!(result.stdout.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_bash_file_not_found() {
         let mut ctx = create_ctx(vec!["nonexistent.sh"]);
         ctx.exec_fn = Some(Arc::new(|_, _, _, _, _| {
@@ -192,7 +213,7 @@ mod tests {
         assert!(result.stderr.contains("No such file or directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_sh_file_not_found() {
         let mut ctx = create_ctx(vec!["nonexistent.sh"]);
         ctx.exec_fn = Some(Arc::new(|_, _, _, _, _| {

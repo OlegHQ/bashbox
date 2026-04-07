@@ -12,9 +12,8 @@
 //! when not quoted. The let builtin needs to handle this by joining
 //! arguments that are part of the same expression.
 
-use crate::interpreter::types::InterpreterState;
 use crate::interpreter::arithmetic::evaluate_arithmetic;
-use crate::parser::parse_arith_expr;
+use crate::interpreter::types::InterpreterState;
 
 /// Result type for builtin commands
 pub type BuiltinResult = (String, String, i32);
@@ -63,10 +62,14 @@ fn parse_let_args(args: &[String]) -> Vec<String> {
 /// Evaluates each argument as an arithmetic expression.
 /// Returns 0 if the last expression evaluates to non-zero, 1 if zero.
 pub fn handle_let(state: &mut InterpreterState, args: &[String]) -> BuiltinResult {
-    use crate::interpreter::types::{InterpreterContext, ExecutionLimits};
+    use crate::interpreter::types::{ExecutionLimits, InterpreterContext};
 
     if args.is_empty() {
-        return (String::new(), "bash: let: expression expected\n".to_string(), 1);
+        return (
+            String::new(),
+            "bash: let: expression expected\n".to_string(),
+            1,
+        );
     }
 
     // Parse args into expressions (handling split parentheses)
@@ -77,22 +80,9 @@ pub fn handle_let(state: &mut InterpreterState, args: &[String]) -> BuiltinResul
     let mut ctx = InterpreterContext::new(state, &limits);
 
     for expr in &expressions {
-        // Parse the expression using the arithmetic parser
-        let (arith_expr, pos) = parse_arith_expr(expr, 0);
-
-        // Check for unparsed content (syntax error)
-        if pos < expr.len() {
-            let unparsed = &expr[pos..];
-            let error_token = unparsed.split_whitespace().next().unwrap_or(unparsed);
-            return (
-                String::new(),
-                format!("bash: let: {}: syntax error in expression (error token is \"{}\")\n", expr, error_token),
-                1,
-            );
-        }
-
-        // Evaluate the expression
-        match evaluate_arithmetic(&mut ctx, &arith_expr, false, None) {
+        // Parse the expression using the brush-parser arithmetic parser
+        // Evaluate the expression directly from string
+        match evaluate_arithmetic(&mut ctx, expr, false, None) {
             Ok(result) => {
                 last_result = result;
             }

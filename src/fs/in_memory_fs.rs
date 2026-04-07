@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use super::path::normalize_path;
 use super::types::*;
 
 /// In-memory virtual file system.
@@ -20,11 +21,16 @@ impl InMemoryFs {
     /// Create a new empty in-memory filesystem.
     pub fn new() -> Self {
         let mut data = HashMap::new();
-        data.insert("/".to_string(), FsEntry::Directory {
-            mode: 0o755,
-            mtime: SystemTime::now(),
-        });
-        Self { data: RwLock::new(data) }
+        data.insert(
+            "/".to_string(),
+            FsEntry::Directory {
+                mode: 0o755,
+                mtime: SystemTime::now(),
+            },
+        );
+        Self {
+            data: RwLock::new(data),
+        }
     }
 
     /// Create with initial files.
@@ -38,11 +44,14 @@ impl InMemoryFs {
                 FileContent::Text(s) => s.as_bytes().to_vec(),
                 FileContent::Binary(b) => b.clone(),
             };
-            data.insert(normalized, FsEntry::File {
-                content,
-                mode: init.mode.unwrap_or(0o644),
-                mtime: init.mtime.unwrap_or_else(SystemTime::now),
-            });
+            data.insert(
+                normalized,
+                FsEntry::File {
+                    content,
+                    mode: init.mode.unwrap_or(0o644),
+                    mtime: init.mtime.unwrap_or_else(SystemTime::now),
+                },
+            );
         }
         drop(data);
         fs
@@ -57,10 +66,13 @@ impl InMemoryFs {
         for part in parts {
             current = format!("{}/{}", current, part);
             if !data.contains_key(&current) {
-                data.insert(current.clone(), FsEntry::Directory {
-                    mode: 0o755,
-                    mtime: SystemTime::now(),
-                });
+                data.insert(
+                    current.clone(),
+                    FsEntry::Directory {
+                        mode: 0o755,
+                        mtime: SystemTime::now(),
+                    },
+                );
             }
         }
     }
@@ -70,11 +82,14 @@ impl InMemoryFs {
         let mut data = self.data.blocking_write();
         let normalized = normalize_path(path);
         ensure_parent_dirs(&mut data, &normalized);
-        data.insert(normalized, FsEntry::File {
-            content: content.to_vec(),
-            mode: 0o644,
-            mtime: SystemTime::now(),
-        });
+        data.insert(
+            normalized,
+            FsEntry::File {
+                content: content.to_vec(),
+                mode: 0o644,
+                mtime: SystemTime::now(),
+            },
+        );
     }
 }
 
@@ -87,33 +102,6 @@ impl Default for InMemoryFs {
 // ============================================================================
 // Path utilities (free functions operating on HashMap directly)
 // ============================================================================
-
-fn normalize_path(path: &str) -> String {
-    if path.is_empty() || path == "/" {
-        return "/".to_string();
-    }
-    let mut normalized = path.to_string();
-    if normalized.ends_with('/') && normalized.len() > 1 {
-        normalized.pop();
-    }
-    if !normalized.starts_with('/') {
-        normalized = format!("/{}", normalized);
-    }
-    let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    let mut resolved: Vec<&str> = Vec::new();
-    for part in parts {
-        if part == ".." {
-            resolved.pop();
-        } else {
-            resolved.push(part);
-        }
-    }
-    if resolved.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{}", resolved.join("/"))
-    }
-}
 
 fn dirname(path: &str) -> String {
     let normalized = normalize_path(path);
@@ -134,10 +122,13 @@ fn ensure_parent_dirs(data: &mut HashMap<String, FsEntry>, path: &str) {
     }
     if !data.contains_key(&dir) {
         ensure_parent_dirs(data, &dir);
-        data.insert(dir, FsEntry::Directory {
-            mode: 0o755,
-            mtime: SystemTime::now(),
-        });
+        data.insert(
+            dir,
+            FsEntry::Directory {
+                mode: 0o755,
+                mtime: SystemTime::now(),
+            },
+        );
     }
 }
 
@@ -264,11 +255,14 @@ impl FileSystem for InMemoryFs {
         let mut data = self.data.write().await;
         let normalized = normalize_path(path);
         ensure_parent_dirs(&mut data, &normalized);
-        data.insert(normalized, FsEntry::File {
-            content: content.to_vec(),
-            mode: 0o644,
-            mtime: SystemTime::now(),
-        });
+        data.insert(
+            normalized,
+            FsEntry::File {
+                content: content.to_vec(),
+                mode: 0o644,
+                mtime: SystemTime::now(),
+            },
+        );
         Ok(())
     }
 
@@ -283,22 +277,33 @@ impl FileSystem for InMemoryFs {
             });
         }
 
-        if let Some(FsEntry::File { content: existing, mode, .. }) = data.get(&normalized) {
+        if let Some(FsEntry::File {
+            content: existing,
+            mode,
+            ..
+        }) = data.get(&normalized)
+        {
             let mut combined = existing.clone();
             let mode = *mode;
             combined.extend_from_slice(content);
-            data.insert(normalized, FsEntry::File {
-                content: combined,
-                mode,
-                mtime: SystemTime::now(),
-            });
+            data.insert(
+                normalized,
+                FsEntry::File {
+                    content: combined,
+                    mode,
+                    mtime: SystemTime::now(),
+                },
+            );
         } else {
             ensure_parent_dirs(&mut data, &normalized);
-            data.insert(normalized, FsEntry::File {
-                content: content.to_vec(),
-                mode: 0o644,
-                mtime: SystemTime::now(),
-            });
+            data.insert(
+                normalized,
+                FsEntry::File {
+                    content: content.to_vec(),
+                    mode: 0o644,
+                    mtime: SystemTime::now(),
+                },
+            );
         }
         Ok(())
     }
@@ -341,7 +346,11 @@ impl FileSystem for InMemoryFs {
         let data = self.data.read().await;
         let resolved = resolve_intermediate_symlinks(&data, path, "lstat")?;
         match data.get(&resolved) {
-            Some(FsEntry::Symlink { target, mode, mtime }) => Ok(FsStat {
+            Some(FsEntry::Symlink {
+                target,
+                mode,
+                mtime,
+            }) => Ok(FsStat {
                 is_file: false,
                 is_directory: false,
                 is_symlink: true,
@@ -400,10 +409,13 @@ impl FileSystem for InMemoryFs {
                 for part in parts {
                     current = format!("{}/{}", current, part);
                     if !data.contains_key(&current) {
-                        data.insert(current.clone(), FsEntry::Directory {
-                            mode: 0o755,
-                            mtime: SystemTime::now(),
-                        });
+                        data.insert(
+                            current.clone(),
+                            FsEntry::Directory {
+                                mode: 0o755,
+                                mtime: SystemTime::now(),
+                            },
+                        );
                     }
                 }
                 return Ok(());
@@ -415,10 +427,13 @@ impl FileSystem for InMemoryFs {
             }
         }
 
-        data.insert(normalized, FsEntry::Directory {
-            mode: 0o755,
-            mtime: SystemTime::now(),
-        });
+        data.insert(
+            normalized,
+            FsEntry::Directory {
+                mode: 0o755,
+                mtime: SystemTime::now(),
+            },
+        );
         Ok(())
     }
 
@@ -446,14 +461,18 @@ impl FileSystem for InMemoryFs {
                     normalized = resolve_symlink_target(&normalized, target);
                 }
                 Some(FsEntry::Directory { .. }) => break,
-                Some(_) => return Err(FsError::NotDirectory {
-                    path: path.to_string(),
-                    operation: "scandir".to_string(),
-                }),
-                None => return Err(FsError::NotFound {
-                    path: path.to_string(),
-                    operation: "scandir".to_string(),
-                }),
+                Some(_) => {
+                    return Err(FsError::NotDirectory {
+                        path: path.to_string(),
+                        operation: "scandir".to_string(),
+                    })
+                }
+                None => {
+                    return Err(FsError::NotFound {
+                        path: path.to_string(),
+                        operation: "scandir".to_string(),
+                    })
+                }
             }
         }
 
@@ -470,13 +489,19 @@ impl FileSystem for InMemoryFs {
             }
             if let Some(rest) = p.strip_prefix(&prefix) {
                 let name = rest.split('/').next().unwrap_or("");
-                if !name.is_empty() && !rest[name.len()..].contains('/') && !entries_map.contains_key(name) {
-                    entries_map.insert(name.to_string(), DirentEntry {
-                        name: name.to_string(),
-                        is_file: fs_entry.is_file(),
-                        is_directory: fs_entry.is_directory(),
-                        is_symlink: fs_entry.is_symlink(),
-                    });
+                if !name.is_empty()
+                    && !rest[name.len()..].contains('/')
+                    && !entries_map.contains_key(name)
+                {
+                    entries_map.insert(
+                        name.to_string(),
+                        DirentEntry {
+                            name: name.to_string(),
+                            is_file: fs_entry.is_file(),
+                            is_directory: fs_entry.is_directory(),
+                            is_symlink: fs_entry.is_symlink(),
+                        },
+                    );
                 }
             }
         }
@@ -507,7 +532,8 @@ impl FileSystem for InMemoryFs {
             } else {
                 format!("{}/", normalized)
             };
-            let children: Vec<String> = data.keys()
+            let children: Vec<String> = data
+                .keys()
                 .filter(|k| k.starts_with(&prefix))
                 .cloned()
                 .collect();
@@ -539,9 +565,20 @@ impl FileSystem for InMemoryFs {
                 path: src.to_string(),
                 operation: "cp".to_string(),
             }),
-            Some(FsEntry::File { content, mode, mtime }) => {
+            Some(FsEntry::File {
+                content,
+                mode,
+                mtime,
+            }) => {
                 ensure_parent_dirs(&mut data, &dest_norm);
-                data.insert(dest_norm, FsEntry::File { content, mode, mtime });
+                data.insert(
+                    dest_norm,
+                    FsEntry::File {
+                        content,
+                        mode,
+                        mtime,
+                    },
+                );
                 Ok(())
             }
             Some(FsEntry::Directory { .. }) => {
@@ -557,7 +594,8 @@ impl FileSystem for InMemoryFs {
                 } else {
                     format!("{}/", src_norm)
                 };
-                let entries: Vec<(String, FsEntry)> = data.iter()
+                let entries: Vec<(String, FsEntry)> = data
+                    .iter()
                     .filter(|(k, _)| k.starts_with(&prefix) || *k == &src_norm)
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
@@ -574,9 +612,20 @@ impl FileSystem for InMemoryFs {
                 }
                 Ok(())
             }
-            Some(FsEntry::Symlink { target, mode, mtime }) => {
+            Some(FsEntry::Symlink {
+                target,
+                mode,
+                mtime,
+            }) => {
                 ensure_parent_dirs(&mut data, &dest_norm);
-                data.insert(dest_norm, FsEntry::Symlink { target, mode, mtime });
+                data.insert(
+                    dest_norm,
+                    FsEntry::Symlink {
+                        target,
+                        mode,
+                        mtime,
+                    },
+                );
                 Ok(())
             }
         }
@@ -584,16 +633,32 @@ impl FileSystem for InMemoryFs {
 
     async fn mv(&self, src: &str, dest: &str) -> Result<(), FsError> {
         self.cp(src, dest, &CpOptions { recursive: true }).await?;
-        self.rm(src, &RmOptions { recursive: true, force: false }).await
+        self.rm(
+            src,
+            &RmOptions {
+                recursive: true,
+                force: false,
+            },
+        )
+        .await
     }
 
     async fn chmod(&self, path: &str, mode: u32) -> Result<(), FsError> {
         let mut data = self.data.write().await;
         let normalized = normalize_path(path);
         match data.get_mut(&normalized) {
-            Some(FsEntry::File { mode: m, .. }) => { *m = mode; Ok(()) }
-            Some(FsEntry::Directory { mode: m, .. }) => { *m = mode; Ok(()) }
-            Some(FsEntry::Symlink { mode: m, .. }) => { *m = mode; Ok(()) }
+            Some(FsEntry::File { mode: m, .. }) => {
+                *m = mode;
+                Ok(())
+            }
+            Some(FsEntry::Directory { mode: m, .. }) => {
+                *m = mode;
+                Ok(())
+            }
+            Some(FsEntry::Symlink { mode: m, .. }) => {
+                *m = mode;
+                Ok(())
+            }
             None => Err(FsError::NotFound {
                 path: path.to_string(),
                 operation: "chmod".to_string(),
@@ -611,11 +676,14 @@ impl FileSystem for InMemoryFs {
             });
         }
         ensure_parent_dirs(&mut data, &normalized);
-        data.insert(normalized, FsEntry::Symlink {
-            target: target.to_string(),
-            mode: 0o777,
-            mtime: SystemTime::now(),
-        });
+        data.insert(
+            normalized,
+            FsEntry::Symlink {
+                target: target.to_string(),
+                mode: 0o777,
+                mtime: SystemTime::now(),
+            },
+        );
         Ok(())
     }
 
@@ -630,7 +698,11 @@ impl FileSystem for InMemoryFs {
                 path: existing_path.to_string(),
                 operation: "link".to_string(),
             }),
-            Some(FsEntry::File { content, mode, mtime }) => {
+            Some(FsEntry::File {
+                content,
+                mode,
+                mtime,
+            }) => {
                 if data.contains_key(&new_norm) {
                     return Err(FsError::AlreadyExists {
                         path: new_path.to_string(),
@@ -638,7 +710,14 @@ impl FileSystem for InMemoryFs {
                     });
                 }
                 ensure_parent_dirs(&mut data, &new_norm);
-                data.insert(new_norm, FsEntry::File { content, mode, mtime });
+                data.insert(
+                    new_norm,
+                    FsEntry::File {
+                        content,
+                        mode,
+                        mtime,
+                    },
+                );
                 Ok(())
             }
             _ => Err(FsError::PermissionDenied {
@@ -680,9 +759,18 @@ impl FileSystem for InMemoryFs {
         let mut data = self.data.write().await;
         let resolved = resolve_path_with_symlinks(&data, path, "utimes")?;
         match data.get_mut(&resolved) {
-            Some(FsEntry::File { mtime: m, .. }) => { *m = mtime; Ok(()) }
-            Some(FsEntry::Directory { mtime: m, .. }) => { *m = mtime; Ok(()) }
-            Some(FsEntry::Symlink { mtime: m, .. }) => { *m = mtime; Ok(()) }
+            Some(FsEntry::File { mtime: m, .. }) => {
+                *m = mtime;
+                Ok(())
+            }
+            Some(FsEntry::Directory { mtime: m, .. }) => {
+                *m = mtime;
+                Ok(())
+            }
+            Some(FsEntry::Symlink { mtime: m, .. }) => {
+                *m = mtime;
+                Ok(())
+            }
             None => Err(FsError::NotFound {
                 path: path.to_string(),
                 operation: "utimes".to_string(),
@@ -744,7 +832,7 @@ mod tests {
         assert_eq!(dirname("/foo/bar/baz"), "/foo/bar");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_basic_file_ops() {
         let fs = InMemoryFs::new();
         fs.write_file("/test.txt", b"hello").await.unwrap();
@@ -753,36 +841,50 @@ mod tests {
         assert_eq!(content, "hello");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_and_readdir() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/foo", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/foo", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/foo/a.txt", b"a").await.unwrap();
         fs.write_file("/foo/b.txt", b"b").await.unwrap();
         let entries = fs.readdir("/foo").await.unwrap();
         assert_eq!(entries, vec!["a.txt", "b.txt"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_recursive() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         assert!(fs.exists("/a").await);
         assert!(fs.exists("/a/b").await);
         assert!(fs.exists("/a/b/c").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_recursive() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"data").await.unwrap();
-        fs.rm("/dir", &RmOptions { recursive: true, force: false }).await.unwrap();
+        fs.rm(
+            "/dir",
+            &RmOptions {
+                recursive: true,
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
         assert!(!fs.exists("/dir").await);
         assert!(!fs.exists("/dir/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_symlink_and_readlink() {
         let fs = InMemoryFs::new();
         fs.write_file("/target.txt", b"content").await.unwrap();
@@ -793,7 +895,7 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_and_lstat() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"hello").await.unwrap();
@@ -808,7 +910,7 @@ mod tests {
         assert!(!lstat.is_file);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/f.txt", b"hello").await.unwrap();
@@ -817,11 +919,13 @@ mod tests {
         assert_eq!(content, "hello world");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_and_mv() {
         let fs = InMemoryFs::new();
         fs.write_file("/src.txt", b"data").await.unwrap();
-        fs.cp("/src.txt", "/dst.txt", &CpOptions { recursive: false }).await.unwrap();
+        fs.cp("/src.txt", "/dst.txt", &CpOptions { recursive: false })
+            .await
+            .unwrap();
         assert!(fs.exists("/dst.txt").await);
         assert!(fs.exists("/src.txt").await);
 
@@ -830,10 +934,12 @@ mod tests {
         assert!(!fs.exists("/dst.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_realpath() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/a", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/a", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/a/file.txt", b"x").await.unwrap();
         fs.symlink("/a", "/link").await.unwrap();
         let real = fs.realpath("/link/file.txt").await.unwrap();
@@ -844,7 +950,7 @@ mod tests {
     // Additional comprehensive tests
     // ============================================================================
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_write_and_read_binary_data() {
         let fs = InMemoryFs::new();
         let data = vec![0x00, 0x01, 0x02, 0xff, 0xfe];
@@ -853,7 +959,7 @@ mod tests {
         assert_eq!(result, data);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_write_and_read_empty_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/empty.txt", b"").await.unwrap();
@@ -864,7 +970,7 @@ mod tests {
         assert_eq!(stat.size, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_file_buffer_with_null_bytes() {
         let fs = InMemoryFs::new();
         let data = vec![0x00, 0x01, 0x00, 0xff, 0x00];
@@ -873,7 +979,7 @@ mod tests {
         assert_eq!(result, data);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_to_nonexistent_file() {
         let fs = InMemoryFs::new();
         fs.append_file("/new.txt", b"hello").await.unwrap();
@@ -881,7 +987,7 @@ mod tests {
         assert_eq!(content, "hello");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_binary_data() {
         let fs = InMemoryFs::new();
         fs.write_file("/bin.dat", &[0x01, 0x02]).await.unwrap();
@@ -890,51 +996,63 @@ mod tests {
         assert_eq!(result, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_append_to_directory_fails() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let result = fs.append_file("/dir", b"data").await;
         assert!(result.is_err());
         match result {
-            Err(FsError::IsDirectory { .. }) => {},
+            Err(FsError::IsDirectory { .. }) => {}
             _ => panic!("Expected IsDirectory error"),
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_already_exists_error() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let result = fs.mkdir("/dir", &MkdirOptions { recursive: false }).await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_recursive_idempotent() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         // Should not error when called again with recursive
-        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a/b/c", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         assert!(fs.exists("/a/b/c").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mkdir_parent_not_found() {
         let fs = InMemoryFs::new();
-        let result = fs.mkdir("/nonexistent/child", &MkdirOptions { recursive: false }).await;
+        let result = fs
+            .mkdir("/nonexistent/child", &MkdirOptions { recursive: false })
+            .await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readdir_empty_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/empty", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/empty", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let entries = fs.readdir("/empty").await.unwrap();
         assert_eq!(entries.len(), 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readdir_sorted() {
         let fs = InMemoryFs::new();
         fs.write_file("/dir/zebra.txt", b"z").await.unwrap();
@@ -944,11 +1062,13 @@ mod tests {
         assert_eq!(entries, vec!["apple.txt", "banana.txt", "zebra.txt"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readdir_with_file_types() {
         let fs = InMemoryFs::new();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
-        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.symlink("/dir/file.txt", "/dir/link.txt").await.unwrap();
 
         let entries = fs.readdir_with_file_types("/dir").await.unwrap();
@@ -970,79 +1090,123 @@ mod tests {
         assert!(link.is_symlink);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readdir_not_directory() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"content").await.unwrap();
         let result = fs.readdir("/file.txt").await;
         assert!(result.is_err());
         match result {
-            Err(FsError::NotDirectory { .. }) => {},
+            Err(FsError::NotDirectory { .. }) => {}
             _ => panic!("Expected NotDirectory error"),
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_nonexistent_with_force() {
         let fs = InMemoryFs::new();
-        let result = fs.rm("/nonexistent", &RmOptions { recursive: false, force: true }).await;
+        let result = fs
+            .rm(
+                "/nonexistent",
+                &RmOptions {
+                    recursive: false,
+                    force: true,
+                },
+            )
+            .await;
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_nonexistent_without_force() {
         let fs = InMemoryFs::new();
-        let result = fs.rm("/nonexistent", &RmOptions { recursive: false, force: false }).await;
+        let result = fs
+            .rm(
+                "/nonexistent",
+                &RmOptions {
+                    recursive: false,
+                    force: false,
+                },
+            )
+            .await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_directory_not_empty() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"data").await.unwrap();
-        let result = fs.rm("/dir", &RmOptions { recursive: false, force: false }).await;
+        let result = fs
+            .rm(
+                "/dir",
+                &RmOptions {
+                    recursive: false,
+                    force: false,
+                },
+            )
+            .await;
         assert!(result.is_err());
         match result {
-            Err(FsError::NotEmpty { .. }) => {},
+            Err(FsError::NotEmpty { .. }) => {}
             _ => panic!("Expected NotEmpty error"),
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rm_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
-        fs.rm("/file.txt", &RmOptions { recursive: false, force: false }).await.unwrap();
+        fs.rm(
+            "/file.txt",
+            &RmOptions {
+                recursive: false,
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
         assert!(!fs.exists("/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_file_to_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/src.txt", b"content").await.unwrap();
-        fs.cp("/src.txt", "/dst.txt", &CpOptions { recursive: false }).await.unwrap();
+        fs.cp("/src.txt", "/dst.txt", &CpOptions { recursive: false })
+            .await
+            .unwrap();
         let content = fs.read_file("/dst.txt").await.unwrap();
         assert_eq!(content, "content");
         assert!(fs.exists("/src.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_directory_without_recursive() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let result = fs.cp("/dir", "/dst", &CpOptions { recursive: false }).await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_directory_recursive() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/src/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/src/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/src/file.txt", b"data").await.unwrap();
-        fs.write_file("/src/sub/nested.txt", b"nested").await.unwrap();
+        fs.write_file("/src/sub/nested.txt", b"nested")
+            .await
+            .unwrap();
 
-        fs.cp("/src", "/dst", &CpOptions { recursive: true }).await.unwrap();
+        fs.cp("/src", "/dst", &CpOptions { recursive: true })
+            .await
+            .unwrap();
 
         assert!(fs.exists("/dst").await);
         assert!(fs.exists("/dst/file.txt").await);
@@ -1051,17 +1215,19 @@ mod tests {
         assert_eq!(content, "nested");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_preserves_binary_content() {
         let fs = InMemoryFs::new();
         let data = vec![0x00, 0xff, 0x00, 0xff];
         fs.write_file("/src.bin", &data).await.unwrap();
-        fs.cp("/src.bin", "/dst.bin", &CpOptions { recursive: false }).await.unwrap();
+        fs.cp("/src.bin", "/dst.bin", &CpOptions { recursive: false })
+            .await
+            .unwrap();
         let result = fs.read_file_buffer("/dst.bin").await.unwrap();
         assert_eq!(result, data);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/src.txt", b"data").await.unwrap();
@@ -1072,17 +1238,19 @@ mod tests {
         assert_eq!(content, "data");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_mv_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/src", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/src", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/src/file.txt", b"data").await.unwrap();
         fs.mv("/src", "/dst").await.unwrap();
         assert!(!fs.exists("/src").await);
         assert!(fs.exists("/dst/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_chmod_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1091,23 +1259,25 @@ mod tests {
         assert_eq!(stat.mode, 0o600);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_chmod_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.chmod("/dir", 0o700).await.unwrap();
         let stat = fs.stat("/dir").await.unwrap();
         assert_eq!(stat.mode, 0o700);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_chmod_nonexistent() {
         let fs = InMemoryFs::new();
         let result = fs.chmod("/nonexistent", 0o644).await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_symlink_relative_target() {
         let fs = InMemoryFs::new();
         fs.write_file("/dir/target.txt", b"content").await.unwrap();
@@ -1118,7 +1288,7 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_symlink_absolute_target() {
         let fs = InMemoryFs::new();
         fs.write_file("/target.txt", b"content").await.unwrap();
@@ -1127,7 +1297,7 @@ mod tests {
         assert_eq!(target, "/target.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_symlink_already_exists() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1135,7 +1305,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_symlink_chain() {
         let fs = InMemoryFs::new();
         fs.write_file("/target.txt", b"content").await.unwrap();
@@ -1145,7 +1315,7 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_link_creates_hard_link() {
         let fs = InMemoryFs::new();
         fs.write_file("/original.txt", b"data").await.unwrap();
@@ -1160,14 +1330,14 @@ mod tests {
         assert_eq!(content, "data");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_link_nonexistent_source() {
         let fs = InMemoryFs::new();
         let result = fs.link("/nonexistent", "/link").await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_link_target_exists() {
         let fs = InMemoryFs::new();
         fs.write_file("/src.txt", b"data").await.unwrap();
@@ -1176,7 +1346,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readlink_not_symlink() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1184,30 +1354,32 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readlink_nonexistent() {
         let fs = InMemoryFs::new();
         let result = fs.readlink("/nonexistent").await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_realpath_nonexistent() {
         let fs = InMemoryFs::new();
         let result = fs.realpath("/nonexistent").await;
         assert!(result.is_err());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_realpath_with_dotdot() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/a/b", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a/b", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/a/file.txt", b"data").await.unwrap();
         let real = fs.realpath("/a/b/../file.txt").await.unwrap();
         assert_eq!(real, "/a/file.txt");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_file_size() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"hello world").await.unwrap();
@@ -1217,17 +1389,19 @@ mod tests {
         assert!(!stat.is_directory);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let stat = fs.stat("/dir").await.unwrap();
         assert!(!stat.is_file);
         assert!(stat.is_directory);
         assert_eq!(stat.size, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stat_follows_symlinks() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1237,7 +1411,7 @@ mod tests {
         assert!(!stat.is_symlink);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_lstat_does_not_follow_symlinks() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1247,7 +1421,7 @@ mod tests {
         assert!(!lstat.is_file);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_utimes_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
@@ -1257,77 +1431,89 @@ mod tests {
         assert_eq!(stat.mtime, new_time);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_utimes_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let new_time = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2000000);
         fs.utimes("/dir", new_time).await.unwrap();
         let stat = fs.stat("/dir").await.unwrap();
         assert_eq!(stat.mtime, new_time);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exists_returns_false_for_nonexistent() {
         let fs = InMemoryFs::new();
         assert!(!fs.exists("/nonexistent").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exists_returns_true_for_file() {
         let fs = InMemoryFs::new();
         fs.write_file("/file.txt", b"data").await.unwrap();
         assert!(fs.exists("/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_exists_returns_true_for_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         assert!(fs.exists("/dir").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_file_not_found() {
         let fs = InMemoryFs::new();
         let result = fs.read_file("/nonexistent.txt").await;
         assert!(result.is_err());
         match result {
-            Err(FsError::NotFound { .. }) => {},
+            Err(FsError::NotFound { .. }) => {}
             _ => panic!("Expected NotFound error"),
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_read_file_is_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/dir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let result = fs.read_file("/dir").await;
         assert!(result.is_err());
         match result {
-            Err(FsError::IsDirectory { .. }) => {},
+            Err(FsError::IsDirectory { .. }) => {}
             _ => panic!("Expected IsDirectory error"),
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_with_files_constructor() {
         let mut files = HashMap::new();
-        files.insert("/file1.txt".to_string(), FileInit {
-            content: FileContent::Text("hello".to_string()),
-            mode: Some(0o644),
-            mtime: None,
-        });
-        files.insert("/file2.txt".to_string(), FileInit {
-            content: FileContent::Binary(vec![0x01, 0x02, 0x03]),
-            mode: Some(0o600),
-            mtime: None,
-        });
+        files.insert(
+            "/file1.txt".to_string(),
+            FileInit {
+                content: FileContent::Text("hello".to_string()),
+                mode: Some(0o644),
+                mtime: None,
+            },
+        );
+        files.insert(
+            "/file2.txt".to_string(),
+            FileInit {
+                content: FileContent::Binary(vec![0x01, 0x02, 0x03]),
+                mode: Some(0o600),
+                mtime: None,
+            },
+        );
 
         // with_files uses blocking operations, so we need to call it outside the async context
-        let fs = tokio::task::spawn_blocking(move || {
-            InMemoryFs::with_files(&files)
-        }).await.unwrap();
+        let fs = tokio::task::spawn_blocking(move || InMemoryFs::with_files(&files))
+            .await
+            .unwrap();
 
         let content1 = fs.read_file("/file1.txt").await.unwrap();
         assert_eq!(content1, "hello");
@@ -1339,7 +1525,7 @@ mod tests {
         assert_eq!(stat.mode, 0o600);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_large_file() {
         let fs = InMemoryFs::new();
         let size = 1024 * 1024; // 1MB
@@ -1357,22 +1543,26 @@ mod tests {
         assert_eq!(result[256], 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_symlink() {
         let fs = InMemoryFs::new();
         fs.write_file("/target.txt", b"data").await.unwrap();
         fs.symlink("/target.txt", "/link.txt").await.unwrap();
-        fs.cp("/link.txt", "/copy.txt", &CpOptions { recursive: false }).await.unwrap();
+        fs.cp("/link.txt", "/copy.txt", &CpOptions { recursive: false })
+            .await
+            .unwrap();
 
         // The copy should also be a symlink
         let lstat = fs.lstat("/copy.txt").await.unwrap();
         assert!(lstat.is_symlink);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readdir_follows_symlink_to_directory() {
         let fs = InMemoryFs::new();
-        fs.mkdir("/realdir", &MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/realdir", &MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/realdir/file.txt", b"data").await.unwrap();
         fs.symlink("/realdir", "/linkdir").await.unwrap();
 

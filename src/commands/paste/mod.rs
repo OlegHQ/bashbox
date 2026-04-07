@@ -1,6 +1,8 @@
 // src/commands/paste/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct PasteCommand;
 
@@ -11,7 +13,7 @@ impl Command for PasteCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: paste [OPTION]... [FILE]...\n\n\
                  Merge lines of files side-by-side.\n\n\
@@ -62,9 +64,7 @@ impl Command for PasteCommand {
         }
 
         if files.is_empty() {
-            return CommandResult::error(
-                "paste: missing operand\n".to_string(),
-            );
+            return CommandResult::error("paste: missing operand\n".to_string());
         }
 
         // Read all file contents
@@ -77,10 +77,7 @@ impl Command for PasteCommand {
                 match ctx.fs.read_file(&path).await {
                     Ok(c) => file_contents.push(c),
                     Err(_) => {
-                        return CommandResult::error(format!(
-                            "paste: {}: No such file or directory\n",
-                            file
-                        ));
+                        return CommandResult::error(no_such_file("paste", file));
                     }
                 }
             }
@@ -130,32 +127,14 @@ impl Command for PasteCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::commands::test_utils::*;
     use crate::fs::types::FileSystem;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
-    async fn make_ctx(
-        args: Vec<&str>,
-        stdin: &str,
-        files: Vec<(&str, &str)>,
-    ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+    async fn make_ctx(args: Vec<&str>, stdin: &str, files: Vec<(&str, &str)>) -> CommandContext {
+        make_ctx_with_stdin_and_files(args, stdin, files).await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_two_files() {
         let ctx = make_ctx(
             vec!["/a.txt", "/b.txt"],
@@ -168,7 +147,7 @@ mod tests {
         assert_eq!(result.stdout, "1\ta\n2\tb\n3\tc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_three_files() {
         let ctx = make_ctx(
             vec!["/a.txt", "/b.txt", "/c.txt"],
@@ -185,7 +164,7 @@ mod tests {
         assert_eq!(result.stdout, "1\ta\tx\n2\tb\ty\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_uneven_lines() {
         let ctx = make_ctx(
             vec!["/a.txt", "/b.txt"],
@@ -198,7 +177,7 @@ mod tests {
         assert_eq!(result.stdout, "1\ta\n2\t\n3\t\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_custom_delimiter() {
         let ctx = make_ctx(
             vec!["-d:", "/a.txt", "/b.txt"],
@@ -211,7 +190,7 @@ mod tests {
         assert_eq!(result.stdout, "1:a\n2:b\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_serial() {
         let ctx = make_ctx(
             vec!["-s", "/a.txt", "/b.txt"],
@@ -224,7 +203,7 @@ mod tests {
         assert_eq!(result.stdout, "1\t2\t3\na\tb\tc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_stdin() {
         let ctx = make_ctx(
             vec!["-", "/b.txt"],
@@ -237,21 +216,21 @@ mod tests {
         assert_eq!(result.stdout, "1\ta\n2\tb\n3\tc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_no_files_error() {
         let ctx = make_ctx(vec![], "", vec![]).await;
         let result = PasteCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_file_not_found() {
         let ctx = make_ctx(vec!["/nonexistent.txt"], "", vec![]).await;
         let result = PasteCommand.execute(ctx).await;
         assert_ne!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_multiple_delimiters() {
         let ctx = make_ctx(
             vec!["-d:,", "/a.txt", "/b.txt", "/c.txt"],
@@ -268,20 +247,15 @@ mod tests {
         assert_eq!(result.stdout, "1:a,x\n2:b,y\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_single_file() {
-        let ctx = make_ctx(
-            vec!["/a.txt"],
-            "",
-            vec![("/a.txt", "a\nb\nc\n")],
-        )
-        .await;
+        let ctx = make_ctx(vec!["/a.txt"], "", vec![("/a.txt", "a\nb\nc\n")]).await;
         let result = PasteCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\nc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_empty_file() {
         let ctx = make_ctx(
             vec!["/empty.txt", "/a.txt"],
@@ -294,7 +268,7 @@ mod tests {
         assert_eq!(result.stdout, "\ta\n\tb\n\tc\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_serial_with_delimiter() {
         let ctx = make_ctx(
             vec!["-s", "-d,", "/a.txt"],
@@ -307,7 +281,7 @@ mod tests {
         assert_eq!(result.stdout, "a,b,c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_combined_options() {
         let ctx = make_ctx(
             vec!["-s", "-d,", "/a.txt"],
@@ -320,7 +294,7 @@ mod tests {
         assert_eq!(result.stdout, "a,b,c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_space_delimiter() {
         let ctx = make_ctx(
             vec!["-d", " ", "/a.txt", "/b.txt"],
@@ -333,7 +307,7 @@ mod tests {
         assert_eq!(result.stdout, "a 1\nb 2\nc 3\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_paste_help() {
         let ctx = make_ctx(vec!["--help"], "", vec![]).await;
         let result = PasteCommand.execute(ctx).await;

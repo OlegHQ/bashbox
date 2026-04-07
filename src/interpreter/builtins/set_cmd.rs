@@ -3,12 +3,12 @@
 //! In POSIX mode (set -o posix), errors from set (like invalid options)
 //! cause the script to exit immediately.
 
+use super::break_cmd::BuiltinResult;
 use crate::interpreter::errors::{InterpreterError, PosixFatalError};
 use crate::interpreter::helpers::array::{get_array_indices, get_assoc_array_keys};
-use crate::interpreter::helpers::quoting::{quote_value, quote_array_value};
+use crate::interpreter::helpers::quoting::{quote_array_value, quote_value};
 use crate::interpreter::helpers::shellopts::update_shellopts;
 use crate::interpreter::types::InterpreterState;
-use super::break_cmd::BuiltinResult;
 
 const SET_USAGE: &str = r#"set: usage: set [-eux] [+eux] [-o option] [+o option]
 Options:
@@ -61,24 +61,56 @@ fn get_long_option(name: &str) -> Option<&'static str> {
         "vi" => Some("vi"),
         "emacs" => Some("emacs"),
         // No-ops (accepted for compatibility)
-        "notify" | "monitor" | "braceexpand" | "histexpand" | "physical" |
-        "functrace" | "errtrace" | "privileged" | "hashall" | "ignoreeof" |
-        "interactive-comments" | "keyword" | "onecmd" => Some(""),
+        "notify"
+        | "monitor"
+        | "braceexpand"
+        | "histexpand"
+        | "physical"
+        | "functrace"
+        | "errtrace"
+        | "privileged"
+        | "hashall"
+        | "ignoreeof"
+        | "interactive-comments"
+        | "keyword"
+        | "onecmd" => Some(""),
         _ => None,
     }
 }
 
 /// List of implemented options to display
 const DISPLAY_OPTIONS: &[&str] = &[
-    "allexport", "emacs", "errexit", "noclobber", "noexec", "noglob",
-    "nounset", "pipefail", "posix", "verbose", "vi", "xtrace",
+    "allexport",
+    "emacs",
+    "errexit",
+    "noclobber",
+    "noexec",
+    "noglob",
+    "nounset",
+    "pipefail",
+    "posix",
+    "verbose",
+    "vi",
+    "xtrace",
 ];
 
 /// List of no-op options to display (always off)
 const NOOP_DISPLAY_OPTIONS: &[&str] = &[
-    "braceexpand", "errtrace", "functrace", "hashall", "histexpand",
-    "history", "ignoreeof", "interactive-comments", "keyword", "monitor",
-    "nolog", "notify", "onecmd", "physical", "privileged",
+    "braceexpand",
+    "errtrace",
+    "functrace",
+    "hashall",
+    "histexpand",
+    "history",
+    "ignoreeof",
+    "interactive-comments",
+    "keyword",
+    "monitor",
+    "nolog",
+    "notify",
+    "onecmd",
+    "physical",
+    "privileged",
 ];
 
 /// Set a shell option value
@@ -136,9 +168,7 @@ fn get_shell_option(state: &InterpreterState, option: &str) -> bool {
 
 /// Check if the next argument exists and is not an option flag
 fn has_non_option_arg(args: &[String], i: usize) -> bool {
-    i + 1 < args.len()
-        && !args[i + 1].starts_with('-')
-        && !args[i + 1].starts_with('+')
+    i + 1 < args.len() && !args[i + 1].starts_with('-') && !args[i + 1].starts_with('+')
 }
 
 /// Quote a key for associative array output
@@ -219,7 +249,10 @@ fn get_indexed_array_names(state: &InterpreterState) -> Vec<String> {
 }
 
 /// Handle the set builtin command.
-pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<BuiltinResult, InterpreterError> {
+pub fn handle_set(
+    state: &mut InterpreterState,
+    args: &[String],
+) -> Result<BuiltinResult, InterpreterError> {
     if args.iter().any(|a| a == "--help") {
         return Ok(BuiltinResult {
             stdout: SET_USAGE.to_string(),
@@ -231,7 +264,8 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
     // With no arguments, print all shell variables
     if args.is_empty() {
         let indexed_array_names = get_indexed_array_names(state);
-        let assoc_array_names: Vec<String> = state.associative_arrays
+        let assoc_array_names: Vec<String> = state
+            .associative_arrays
             .as_ref()
             .map(|s| s.iter().cloned().collect())
             .unwrap_or_default();
@@ -241,7 +275,11 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
 
         for (key, value) in &state.env {
             // Only valid variable names
-            if !key.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_') {
+            if !key
+                .chars()
+                .next()
+                .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            {
                 continue;
             }
             if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -260,10 +298,14 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
             if let Some(underscore_pos) = key.rfind('_') {
                 let name = &key[..underscore_pos];
                 let suffix = &key[underscore_pos + 1..];
-                if indexed_array_names.contains(&name.to_string()) && suffix.parse::<i64>().is_ok() {
+                if indexed_array_names.contains(&name.to_string()) && suffix.parse::<i64>().is_ok()
+                {
                     continue;
                 }
-                if suffix == "_length" && (indexed_array_names.contains(&name.to_string()) || assoc_array_names.contains(&name.to_string())) {
+                if suffix == "_length"
+                    && (indexed_array_names.contains(&name.to_string())
+                        || assoc_array_names.contains(&name.to_string()))
+                {
                     continue;
                 }
             }
@@ -317,7 +359,10 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
                     set_shell_option(state, option, arg == "-o");
                 }
                 None => {
-                    let error_msg = format!("bash: set: {}: invalid option name\n{}", opt_name, SET_USAGE);
+                    let error_msg = format!(
+                        "bash: set: {}: invalid option name\n{}",
+                        opt_name, SET_USAGE
+                    );
                     if state.options.posix {
                         return Err(PosixFatalError::new(1, String::new(), error_msg).into());
                     }
@@ -369,7 +414,8 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
         }
 
         // Handle combined short flags like -eu or +eu
-        if arg.len() > 1 && (arg.starts_with('-') || arg.starts_with('+')) && !arg.starts_with("--") {
+        if arg.len() > 1 && (arg.starts_with('-') || arg.starts_with('+')) && !arg.starts_with("--")
+        {
             let enable = arg.starts_with('-');
             for flag in arg[1..].chars() {
                 match get_short_option(flag) {
@@ -377,7 +423,12 @@ pub fn handle_set(state: &mut InterpreterState, args: &[String]) -> Result<Built
                         set_shell_option(state, option, enable);
                     }
                     None => {
-                        let error_msg = format!("bash: set: {}{}: invalid option\n{}", if enable { '-' } else { '+' }, flag, SET_USAGE);
+                        let error_msg = format!(
+                            "bash: set: {}{}: invalid option\n{}",
+                            if enable { '-' } else { '+' },
+                            flag,
+                            SET_USAGE
+                        );
                         if state.options.posix {
                             return Err(PosixFatalError::new(1, String::new(), error_msg).into());
                         }
@@ -502,7 +553,16 @@ mod tests {
     fn test_set_positional_params() {
         let mut state = InterpreterState::default();
 
-        let result = handle_set(&mut state, &["--".to_string(), "a".to_string(), "b".to_string(), "c".to_string()]).unwrap();
+        let result = handle_set(
+            &mut state,
+            &[
+                "--".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+            ],
+        )
+        .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(state.env.get("1").unwrap(), "a");
         assert_eq!(state.env.get("2").unwrap(), "b");

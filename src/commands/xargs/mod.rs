@@ -1,6 +1,7 @@
 // src/commands/xargs/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct XargsCommand;
 
@@ -65,7 +66,7 @@ impl Command for XargsCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: xargs [OPTION]... [COMMAND [INITIAL-ARGS]]\n\n\
                  Build and execute command lines from standard input.\n\n\
@@ -138,18 +139,12 @@ impl Command for XargsCommand {
                 no_run_if_empty = true;
                 command_start = i + 1;
             } else if arg.starts_with("--") {
-                return CommandResult::error(format!(
-                    "xargs: unknown option '{}'\n",
-                    arg
-                ));
+                return CommandResult::error(format!("xargs: unknown option '{}'\n", arg));
             } else if arg.starts_with('-') && arg.len() > 1 {
                 // Check for combined short boolean options
                 for c in arg[1..].chars() {
                     if !"0tr".contains(c) {
-                        return CommandResult::error(format!(
-                            "xargs: unknown option '-{}'\n",
-                            c
-                        ));
+                        return CommandResult::error(format!("xargs: unknown option '-{}'\n", c));
                     }
                 }
                 if arg.contains('0') {
@@ -220,7 +215,11 @@ impl Command for XargsCommand {
 
         // Execute each command invocation
         for cmd_args in &cmd_args_list {
-            let cmd_line = cmd_args.iter().map(|a| quote_arg(a)).collect::<Vec<_>>().join(" ");
+            let cmd_line = cmd_args
+                .iter()
+                .map(|a| quote_arg(a))
+                .collect::<Vec<_>>()
+                .join(" ");
 
             if verbose {
                 stderr.push_str(&format!("{}\n", cmd_line));
@@ -253,44 +252,25 @@ impl Command for XargsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::pin::Pin;
+    use crate::commands::test_utils::*;
     use std::future::Future;
+    use std::pin::Pin;
 
     fn make_ctx(args: Vec<&str>, stdin: &str) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        make_ctx_with_stdin(args, stdin)
     }
 
     fn make_ctx_with_exec(args: Vec<&str>, stdin: &str) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
         let exec_fn: crate::commands::types::ExecFn = Arc::new(|cmd, _stdin, _cwd, _env, _fs| {
-            Box::pin(async move {
-                CommandResult::success(format!("EXEC: {}\n", cmd))
-            }) as Pin<Box<dyn Future<Output = CommandResult> + Send>>
+            Box::pin(async move { CommandResult::success(format!("EXEC: {}\n", cmd)) })
+                as Pin<Box<dyn Future<Output = CommandResult> + Send>>
         });
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: Some(exec_fn),
-            fetch_fn: None,
-        }
+        let mut ctx = make_ctx_with_stdin(args, stdin);
+        ctx.exec_fn = Some(exec_fn);
+        ctx
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_basic_echo_default() {
         // Basic: items passed to echo (default command)
         let ctx = make_ctx(vec![], "hello world\n");
@@ -299,7 +279,7 @@ mod tests {
         assert_eq!(result.stdout, "echo hello world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_replace_mode() {
         // Replace mode: -I {} echo {}
         let ctx = make_ctx(vec!["-I", "{}", "echo", "{}"], "foo\nbar\n");
@@ -308,7 +288,7 @@ mod tests {
         assert_eq!(result.stdout, "echo foo\necho bar\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_batch_mode() {
         // Batch mode: -n 2 groups items into pairs
         let ctx = make_ctx(vec!["-n", "2"], "a b c d e\n");
@@ -317,7 +297,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b\necho c d\necho e\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_null_separator() {
         // Null separator: -0
         let ctx = make_ctx(vec!["-0"], "foo\0bar\0baz\0");
@@ -326,7 +306,7 @@ mod tests {
         assert_eq!(result.stdout, "echo foo bar baz\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_custom_delimiter() {
         // Custom delimiter: -d ,
         let ctx = make_ctx(vec!["-d", ","], "a,b,c\n");
@@ -335,7 +315,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_escape_newline() {
         // Delimiter escape sequences: -d '\n'
         let ctx = make_ctx(vec!["-d", "\\n"], "line1\nline2\nline3\n");
@@ -344,7 +324,7 @@ mod tests {
         assert_eq!(result.stdout, "echo line1 line2 line3\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_verbose_mode() {
         // Verbose mode: -t prints commands to stderr
         let ctx = make_ctx(vec!["-t"], "hello world\n");
@@ -354,7 +334,7 @@ mod tests {
         assert_eq!(result.stderr, "echo hello world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_no_run_if_empty() {
         // No-run-if-empty: -r with empty input -> no output
         let ctx = make_ctx(vec!["-r"], "");
@@ -363,7 +343,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_multiple_items_default() {
         // Multiple items default mode (all on one command)
         let ctx = make_ctx(vec![], "one two three four\n");
@@ -372,7 +352,7 @@ mod tests {
         assert_eq!(result.stdout, "echo one two three four\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_empty_input_without_r() {
         // Empty input without -r (still returns empty - no args to pass)
         let ctx = make_ctx(vec![], "");
@@ -381,7 +361,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_argument_quoting() {
         // Argument quoting (items with spaces)
         let ctx = make_ctx(vec!["-d", ","], "hello world,foo bar\n");
@@ -390,7 +370,7 @@ mod tests {
         assert_eq!(result.stdout, "echo \"hello world\" \"foo bar\"\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_without_exec_fn() {
         // Without exec_fn: returns formatted command strings
         let ctx = make_ctx(vec!["grep", "-l", "pattern"], "file1 file2 file3\n");
@@ -399,7 +379,7 @@ mod tests {
         assert_eq!(result.stdout, "grep -l pattern file1 file2 file3\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_with_exec_fn() {
         // With exec_fn: executes and returns combined output
         let ctx = make_ctx_with_exec(vec![], "hello world\n");
@@ -408,7 +388,7 @@ mod tests {
         assert_eq!(result.stdout, "EXEC: echo hello world\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_replace_multiple_occurrences() {
         // Replace mode with multiple occurrences of replace string
         let ctx = make_ctx(vec!["-I", "{}", "cp", "{}", "{}.bak"], "file1\nfile2\n");
@@ -417,7 +397,7 @@ mod tests {
         assert_eq!(result.stdout, "cp file1 file1.bak\ncp file2 file2.bak\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_command_with_arguments() {
         // Command with arguments: xargs grep -l pattern
         let ctx = make_ctx(vec!["grep", "-l", "pattern"], "a.txt b.txt\n");
@@ -426,7 +406,7 @@ mod tests {
         assert_eq!(result.stdout, "grep -l pattern a.txt b.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_tab() {
         let ctx = make_ctx(vec!["-d", "\\t"], "a\tb\tc\n");
         let result = XargsCommand.execute(ctx).await;
@@ -434,7 +414,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_with_batch() {
         let ctx = make_ctx(vec!["-d", ":", "-n", "2"], "a:b:c:d:e\n");
         let result = XargsCommand.execute(ctx).await;
@@ -442,23 +422,29 @@ mod tests {
         assert_eq!(result.stdout, "echo a b\necho c d\necho e\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_with_replace() {
         let ctx = make_ctx(vec!["-d", ":", "-I", "{}", "echo", "item: {}"], "x:y:z\n");
         let result = XargsCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "echo \"item: x\"\necho \"item: y\"\necho \"item: z\"\n");
+        assert_eq!(
+            result.stdout,
+            "echo \"item: x\"\necho \"item: y\"\necho \"item: z\"\n"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_preserves_spaces() {
         let ctx = make_ctx(vec!["-d", ":", "-n", "1"], "hello world:foo bar:test\n");
         let result = XargsCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "echo \"hello world\"\necho \"foo bar\"\necho test\n");
+        assert_eq!(
+            result.stdout,
+            "echo \"hello world\"\necho \"foo bar\"\necho test\n"
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_empty_items() {
         let ctx = make_ctx(vec!["-d", ":"], "a::b\n");
         let result = XargsCommand.execute(ctx).await;
@@ -466,7 +452,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_delimiter_backslash() {
         let ctx = make_ctx(vec!["-d", "\\\\"], "a\\b\\c\n");
         let result = XargsCommand.execute(ctx).await;
@@ -474,7 +460,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_batch_n1() {
         let ctx = make_ctx(vec!["-n", "1"], "a b c\n");
         let result = XargsCommand.execute(ctx).await;
@@ -482,7 +468,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a\necho b\necho c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_batch_partial() {
         let ctx = make_ctx(vec!["-n", "2"], "a b c\n");
         let result = XargsCommand.execute(ctx).await;
@@ -490,7 +476,7 @@ mod tests {
         assert_eq!(result.stdout, "echo a b\necho c\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_replace_multiple_in_line() {
         let ctx = make_ctx(vec!["-I", "%", "echo", "%-%"], "x\n");
         let result = XargsCommand.execute(ctx).await;
@@ -498,7 +484,7 @@ mod tests {
         assert_eq!(result.stdout, "echo x-x\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_verbose_with_batch() {
         let ctx = make_ctx(vec!["-t", "-n", "1"], "a b\n");
         let result = XargsCommand.execute(ctx).await;
@@ -507,7 +493,7 @@ mod tests {
         assert_eq!(result.stderr, "echo a\necho b\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_help() {
         let ctx = make_ctx(vec!["--help"], "");
         let result = XargsCommand.execute(ctx).await;
@@ -516,7 +502,7 @@ mod tests {
         assert!(result.stdout.contains("Build and execute"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_empty_stdin_whitespace() {
         let ctx = make_ctx(vec![], "   \n  \n");
         let result = XargsCommand.execute(ctx).await;
@@ -524,7 +510,7 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_xargs_single_item() {
         let ctx = make_ctx(vec![], "single\n");
         let result = XargsCommand.execute(ctx).await;

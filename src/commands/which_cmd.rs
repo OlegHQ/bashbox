@@ -1,5 +1,6 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use crate::fs::relative_child;
+use async_trait::async_trait;
 
 pub struct WhichCommand;
 
@@ -45,7 +46,11 @@ impl Command for WhichCommand {
             return CommandResult::with_exit_code(String::new(), String::new(), 1);
         }
 
-        let path_env = ctx.env.get("PATH").cloned().unwrap_or_else(|| "/usr/bin:/bin".to_string());
+        let path_env = ctx
+            .env
+            .get("PATH")
+            .cloned()
+            .unwrap_or_else(|| "/usr/bin:/bin".to_string());
         let path_dirs: Vec<&str> = path_env.split(':').collect();
 
         let mut stdout = String::new();
@@ -58,7 +63,7 @@ impl Command for WhichCommand {
                 if dir.is_empty() {
                     continue;
                 }
-                let full_path = format!("{}/{}", dir, name);
+                let full_path = relative_child(dir, name);
                 if ctx.fs.exists(&full_path).await {
                     found = true;
                     if !silent {
@@ -82,11 +87,11 @@ impl Command for WhichCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_which_no_args() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -103,7 +108,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_which_help() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

@@ -1,15 +1,24 @@
 // src/commands/types.rs
+use crate::fs::FileSystem;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use crate::fs::FileSystem;
 
 /// Callback for executing shell commands (used by xargs, find -exec)
 /// Parameters: command_string, stdin, cwd, env, fs
-pub type ExecFn = Arc<dyn Fn(String, String, String, HashMap<String, String>, Arc<dyn FileSystem>)
-    -> Pin<Box<dyn Future<Output = CommandResult> + Send>> + Send + Sync>;
+pub type ExecFn = Arc<
+    dyn Fn(
+            String,
+            String,
+            String,
+            HashMap<String, String>,
+            Arc<dyn FileSystem>,
+        ) -> Pin<Box<dyn Future<Output = CommandResult> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// HTTP response for fetch callback
 #[derive(Debug, Clone)]
@@ -22,8 +31,16 @@ pub struct FetchResponse {
 
 /// Callback for HTTP requests (used by curl)
 /// Parameters: url, method, headers, body
-pub type FetchFn = Arc<dyn Fn(String, String, HashMap<String, String>, Option<String>)
-    -> Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>> + Send + Sync>;
+pub type FetchFn = Arc<
+    dyn Fn(
+            String,
+            String,
+            HashMap<String, String>,
+            Option<String>,
+        ) -> Pin<Box<dyn Future<Output = Result<FetchResponse, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// 命令执行结果
 #[derive(Debug, Clone)]
@@ -35,15 +52,27 @@ pub struct CommandResult {
 
 impl CommandResult {
     pub fn success(stdout: String) -> Self {
-        Self { stdout, stderr: String::new(), exit_code: 0 }
+        Self {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        }
     }
 
     pub fn error(stderr: String) -> Self {
-        Self { stdout: String::new(), stderr, exit_code: 1 }
+        Self {
+            stdout: String::new(),
+            stderr,
+            exit_code: 1,
+        }
     }
 
     pub fn with_exit_code(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
     }
 }
 

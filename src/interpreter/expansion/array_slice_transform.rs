@@ -75,10 +75,7 @@ pub fn apply_array_slicing(
     let sliced_values: Vec<String> = if let Some(len) = length {
         if len < 0 {
             // Negative length is an error for array slicing in bash
-            return Err(format!(
-                "{}[@]: substring expression < 0",
-                array_name
-            ));
+            return Err(format!("{}[@]: substring expression < 0", array_name));
         }
         // Take 'length' elements starting from start_idx
         elements
@@ -89,7 +86,11 @@ pub fn apply_array_slicing(
             .collect()
     } else {
         // Take all elements starting from start_idx
-        elements.iter().skip(start_idx).map(|(_, v)| v.clone()).collect()
+        elements
+            .iter()
+            .skip(start_idx)
+            .map(|(_, v)| v.clone())
+            .collect()
     };
 
     if sliced_values.is_empty() {

@@ -2,21 +2,28 @@
 //!
 //! Consolidates readonly and export variable logic used in declare, export, local, etc.
 
-use std::collections::HashSet;
-use crate::interpreter::types::InterpreterState;
 use crate::interpreter::errors::ExitError;
+use crate::interpreter::types::InterpreterState;
+use std::collections::HashSet;
 
 /// Mark a variable as readonly.
 pub fn mark_readonly(state: &mut InterpreterState, name: &str) {
     if state.readonly_vars.is_none() {
         state.readonly_vars = Some(HashSet::new());
     }
-    state.readonly_vars.as_mut().unwrap().insert(name.to_string());
+    state
+        .readonly_vars
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
 }
 
 /// Check if a variable is readonly.
 pub fn is_readonly(state: &InterpreterState, name: &str) -> bool {
-    state.readonly_vars.as_ref().map_or(false, |vars| vars.contains(name))
+    state
+        .readonly_vars
+        .as_ref()
+        .map_or(false, |vars| vars.contains(name))
 }
 
 /// Check if a variable is readonly and return an error if so.
@@ -44,12 +51,19 @@ pub fn check_readonly_error(
 /// is popped, the export attribute will be removed if it wasn't exported
 /// before entering the function.
 pub fn mark_exported(state: &mut InterpreterState, name: &str) {
-    let was_exported = state.exported_vars.as_ref().map_or(false, |vars| vars.contains(name));
+    let was_exported = state
+        .exported_vars
+        .as_ref()
+        .map_or(false, |vars| vars.contains(name));
 
     if state.exported_vars.is_none() {
         state.exported_vars = Some(HashSet::new());
     }
-    state.exported_vars.as_mut().unwrap().insert(name.to_string());
+    state
+        .exported_vars
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
 
     // If we're in a local scope and the variable is local, track it
     if !state.local_scopes.is_empty() {
@@ -85,7 +99,10 @@ pub fn unmark_exported(state: &mut InterpreterState, name: &str) {
 
 /// Check if a variable is exported.
 pub fn is_exported(state: &InterpreterState, name: &str) -> bool {
-    state.exported_vars.as_ref().map_or(false, |vars| vars.contains(name))
+    state
+        .exported_vars
+        .as_ref()
+        .map_or(false, |vars| vars.contains(name))
 }
 
 #[cfg(test)]

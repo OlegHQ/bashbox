@@ -21,43 +21,158 @@ pub type BuiltinResult = (String, String, i32);
 
 /// List of shell keywords (matches bash)
 pub const SHELL_KEYWORDS: &[&str] = &[
-    "!", "[[", "]]", "case", "do", "done", "elif", "else", "esac", "fi",
-    "for", "function", "if", "in", "then", "time", "until", "while", "{", "}",
+    "!", "[[", "]]", "case", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if",
+    "in", "then", "time", "until", "while", "{", "}",
 ];
 
 /// List of shell builtins
 pub const SHELL_BUILTINS: &[&str] = &[
-    ".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd",
-    "command", "compgen", "complete", "compopt", "continue", "declare", "dirs",
-    "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc",
-    "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local",
-    "logout", "mapfile", "popd", "printf", "pushd", "pwd", "read", "readarray",
-    "readonly", "return", "set", "shift", "shopt", "source", "suspend", "test",
-    "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias",
-    "unset", "wait",
+    ".",
+    ":",
+    "[",
+    "alias",
+    "bg",
+    "bind",
+    "break",
+    "builtin",
+    "caller",
+    "cd",
+    "command",
+    "compgen",
+    "complete",
+    "compopt",
+    "continue",
+    "declare",
+    "dirs",
+    "disown",
+    "echo",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "getopts",
+    "hash",
+    "help",
+    "history",
+    "jobs",
+    "kill",
+    "let",
+    "local",
+    "logout",
+    "mapfile",
+    "popd",
+    "printf",
+    "pushd",
+    "pwd",
+    "read",
+    "readarray",
+    "readonly",
+    "return",
+    "set",
+    "shift",
+    "shopt",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unset",
+    "wait",
 ];
 
 /// List of shopt options
 pub const SHOPT_OPTIONS: &[&str] = &[
-    "autocd", "assoc_expand_once", "cdable_vars", "cdspell", "checkhash",
-    "checkjobs", "checkwinsize", "cmdhist", "compat31", "compat32", "compat40",
-    "compat41", "compat42", "compat43", "compat44", "complete_fullquote",
-    "direxpand", "dirspell", "dotglob", "execfail", "expand_aliases", "extdebug",
-    "extglob", "extquote", "failglob", "force_fignore", "globasciiranges",
-    "globstar", "gnu_errfmt", "histappend", "histreedit", "histverify",
-    "hostcomplete", "huponexit", "inherit_errexit", "interactive_comments",
-    "lastpipe", "lithist", "localvar_inherit", "localvar_unset", "login_shell",
-    "mailwarn", "no_empty_cmd_completion", "nocaseglob", "nocasematch", "nullglob",
-    "progcomp", "progcomp_alias", "promptvars", "restricted_shell", "shift_verbose",
-    "sourcepath", "xpg_echo",
+    "autocd",
+    "assoc_expand_once",
+    "cdable_vars",
+    "cdspell",
+    "checkhash",
+    "checkjobs",
+    "checkwinsize",
+    "cmdhist",
+    "compat31",
+    "compat32",
+    "compat40",
+    "compat41",
+    "compat42",
+    "compat43",
+    "compat44",
+    "complete_fullquote",
+    "direxpand",
+    "dirspell",
+    "dotglob",
+    "execfail",
+    "expand_aliases",
+    "extdebug",
+    "extglob",
+    "extquote",
+    "failglob",
+    "force_fignore",
+    "globasciiranges",
+    "globstar",
+    "gnu_errfmt",
+    "histappend",
+    "histreedit",
+    "histverify",
+    "hostcomplete",
+    "huponexit",
+    "inherit_errexit",
+    "interactive_comments",
+    "lastpipe",
+    "lithist",
+    "localvar_inherit",
+    "localvar_unset",
+    "login_shell",
+    "mailwarn",
+    "no_empty_cmd_completion",
+    "nocaseglob",
+    "nocasematch",
+    "nullglob",
+    "progcomp",
+    "progcomp_alias",
+    "promptvars",
+    "restricted_shell",
+    "shift_verbose",
+    "sourcepath",
+    "xpg_echo",
 ];
 
 /// Valid action types for -A option
 const VALID_ACTIONS: &[&str] = &[
-    "alias", "arrayvar", "binding", "builtin", "command", "directory", "disabled",
-    "enabled", "export", "file", "function", "group", "helptopic", "hostname",
-    "job", "keyword", "running", "service", "setopt", "shopt", "signal",
-    "stopped", "user", "variable",
+    "alias",
+    "arrayvar",
+    "binding",
+    "builtin",
+    "command",
+    "directory",
+    "disabled",
+    "enabled",
+    "export",
+    "file",
+    "function",
+    "group",
+    "helptopic",
+    "hostname",
+    "job",
+    "keyword",
+    "running",
+    "service",
+    "setopt",
+    "shopt",
+    "signal",
+    "stopped",
+    "user",
+    "variable",
 ];
 
 /// Handle the `compgen` builtin command.
@@ -91,54 +206,98 @@ pub fn handle_compgen(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         } else if arg == "-A" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -A: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -A: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             let action_type = &args[i];
             if !VALID_ACTIONS.contains(&action_type.as_str()) {
-                return (String::new(), format!("compgen: {}: invalid action name\n", action_type), 2);
+                return (
+                    String::new(),
+                    format!("compgen: {}: invalid action name\n", action_type),
+                    2,
+                );
             }
             action_types.push(action_type.clone());
         } else if arg == "-W" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -W: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -W: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             wordlist = Some(args[i].clone());
         } else if arg == "-P" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -P: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -P: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             prefix = args[i].clone();
         } else if arg == "-S" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -S: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -S: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             suffix = args[i].clone();
         } else if arg == "-X" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -X: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -X: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             exclude_pattern = Some(args[i].clone());
         } else if arg == "-o" {
             i += 1;
             if i >= args.len() {
-                return (String::new(), "compgen: -o: option requires an argument\n".to_string(), 2);
+                return (
+                    String::new(),
+                    "compgen: -o: option requires an argument\n".to_string(),
+                    2,
+                );
             }
             let opt = &args[i];
             // Validate option
-            let valid_opts = ["plusdirs", "dirnames", "default", "filenames", "nospace", "bashdefault", "noquote"];
+            let valid_opts = [
+                "plusdirs",
+                "dirnames",
+                "default",
+                "filenames",
+                "nospace",
+                "bashdefault",
+                "noquote",
+            ];
             if !valid_opts.contains(&opt.as_str()) {
-                return (String::new(), format!("compgen: {}: invalid option name\n", opt), 2);
+                return (
+                    String::new(),
+                    format!("compgen: {}: invalid option name\n", opt),
+                    2,
+                );
             }
             // These options are mostly for display, not generation
         } else if arg == "-F" || arg == "-C" || arg == "-G" {
             // These require runtime dependencies, skip the argument
             i += 1;
             if i >= args.len() {
-                return (String::new(), format!("compgen: {}: option requires an argument\n", arg), 2);
+                return (
+                    String::new(),
+                    format!("compgen: {}: option requires an argument\n", arg),
+                    2,
+                );
             }
             // Skip - not implemented
         } else if arg == "--" {
@@ -203,11 +362,19 @@ pub fn handle_compgen(state: &mut InterpreterState, args: &[String]) -> BuiltinR
     // Apply -X filter
     if let Some(ref pattern) = exclude_pattern {
         let is_negated = pattern.starts_with('!');
-        let pat = if is_negated { &pattern[1..] } else { pattern.as_str() };
+        let pat = if is_negated {
+            &pattern[1..]
+        } else {
+            pattern.as_str()
+        };
 
         completions.retain(|c| {
             let matches = simple_pattern_match(c, pat);
-            if is_negated { matches } else { !matches }
+            if is_negated {
+                matches
+            } else {
+                !matches
+            }
         });
     }
 
@@ -223,7 +390,11 @@ pub fn handle_compgen(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         .collect::<Vec<_>>()
         .join("\n");
 
-    let output = if output.is_empty() { output } else { format!("{}\n", output) };
+    let output = if output.is_empty() {
+        output
+    } else {
+        format!("{}\n", output)
+    };
     (output, String::new(), 0)
 }
 
@@ -398,8 +569,13 @@ fn simple_pattern_match(s: &str, pattern: &str) -> bool {
                 let mut remaining_s = String::new();
                 while s_chars.peek().is_some() {
                     remaining_s.push(s_chars.next().unwrap());
-                    let test_s: String = remaining_s.chars().rev().collect::<String>()
-                        .chars().rev().collect();
+                    let test_s: String = remaining_s
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect();
                     // This is a simplified check - full glob matching is more complex
                 }
                 return false;
@@ -442,7 +618,9 @@ fn is_valid_identifier(s: &str) -> bool {
     if !matches!(first, b'a'..=b'z' | b'A'..=b'Z' | b'_') {
         return false;
     }
-    bytes[1..].iter().all(|&b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
+    bytes[1..]
+        .iter()
+        .all(|&b| matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
 }
 
 // ============================================================================
@@ -550,7 +728,11 @@ mod tests {
     #[test]
     fn test_handle_compgen_wordlist() {
         let mut state = InterpreterState::default();
-        let args = vec!["-W".to_string(), "apple banana cherry".to_string(), "b".to_string()];
+        let args = vec![
+            "-W".to_string(),
+            "apple banana cherry".to_string(),
+            "b".to_string(),
+        ];
         let (stdout, stderr, code) = handle_compgen(&mut state, &args);
         assert_eq!(code, 0);
         assert!(stderr.is_empty());
@@ -563,9 +745,12 @@ mod tests {
     fn test_handle_compgen_prefix_suffix() {
         let mut state = InterpreterState::default();
         let args = vec![
-            "-W".to_string(), "foo bar".to_string(),
-            "-P".to_string(), "pre_".to_string(),
-            "-S".to_string(), "_suf".to_string(),
+            "-W".to_string(),
+            "foo bar".to_string(),
+            "-P".to_string(),
+            "pre_".to_string(),
+            "-S".to_string(),
+            "_suf".to_string(),
         ];
         let (stdout, _, code) = handle_compgen(&mut state, &args);
         assert_eq!(code, 0);

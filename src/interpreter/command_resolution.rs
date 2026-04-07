@@ -20,7 +20,10 @@ pub enum ResolveCommandResult {
 impl ResolveCommandResult {
     /// Check if the result is a successful resolution
     pub fn is_found(&self) -> bool {
-        matches!(self, ResolveCommandResult::Command { .. } | ResolveCommandResult::Script { .. })
+        matches!(
+            self,
+            ResolveCommandResult::Command { .. } | ResolveCommandResult::Script { .. }
+        )
     }
 
     /// Get the path if resolution was successful
@@ -79,7 +82,9 @@ pub struct CommandHashTable {
 impl CommandHashTable {
     /// Create a new empty hash table
     pub fn new() -> Self {
-        Self { table: HashMap::new() }
+        Self {
+            table: HashMap::new(),
+        }
     }
 
     /// Get the cached path for a command
@@ -174,7 +179,9 @@ pub async fn resolve_command<F: CommandResolutionFs>(
 
         // Check if file exists
         if !fs.exists(&resolved_path).await {
-            return ResolveCommandResult::NotFound { path: Some(resolved_path) };
+            return ResolveCommandResult::NotFound {
+                path: Some(resolved_path),
+            };
         }
 
         // Extract command name from path
@@ -186,25 +193,35 @@ pub async fn resolve_command<F: CommandResolutionFs>(
             Some(stat) => {
                 if stat.is_directory {
                     // Trying to execute a directory
-                    return ResolveCommandResult::PermissionDenied { path: resolved_path };
+                    return ResolveCommandResult::PermissionDenied {
+                        path: resolved_path,
+                    };
                 }
 
                 // For registered commands (like /bin/echo), skip execute check
                 if is_cmd_registered {
-                    return ResolveCommandResult::Command { path: resolved_path };
+                    return ResolveCommandResult::Command {
+                        path: resolved_path,
+                    };
                 }
 
                 // For non-registered commands, check if the file is executable
                 if !is_executable_mode(stat.mode) {
-                    return ResolveCommandResult::PermissionDenied { path: resolved_path };
+                    return ResolveCommandResult::PermissionDenied {
+                        path: resolved_path,
+                    };
                 }
 
                 // File exists and is executable - treat as user script
-                ResolveCommandResult::Script { path: resolved_path }
+                ResolveCommandResult::Script {
+                    path: resolved_path,
+                }
             }
             None => {
                 // If stat fails, treat as not found
-                ResolveCommandResult::NotFound { path: Some(resolved_path) }
+                ResolveCommandResult::NotFound {
+                    path: Some(resolved_path),
+                }
             }
         }
     } else {
@@ -452,11 +469,15 @@ mod tests {
 
     #[test]
     fn test_resolve_command_result() {
-        let found = ResolveCommandResult::Command { path: "/bin/ls".to_string() };
+        let found = ResolveCommandResult::Command {
+            path: "/bin/ls".to_string(),
+        };
         assert!(found.is_found());
         assert_eq!(found.path(), Some("/bin/ls"));
 
-        let script = ResolveCommandResult::Script { path: "./script.sh".to_string() };
+        let script = ResolveCommandResult::Script {
+            path: "./script.sh".to_string(),
+        };
         assert!(script.is_found());
         assert_eq!(script.path(), Some("./script.sh"));
 
@@ -464,7 +485,9 @@ mod tests {
         assert!(!not_found.is_found());
         assert_eq!(not_found.path(), None);
 
-        let denied = ResolveCommandResult::PermissionDenied { path: "/bin/ls".to_string() };
+        let denied = ResolveCommandResult::PermissionDenied {
+            path: "/bin/ls".to_string(),
+        };
         assert!(!denied.is_found());
         assert_eq!(denied.path(), Some("/bin/ls"));
     }

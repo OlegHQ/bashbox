@@ -22,9 +22,9 @@
 //!   1 if not in a completion function and no command name is given
 //!   2 if an invalid option is specified
 
-use std::collections::{HashMap, HashSet};
-use crate::interpreter::types::{CompletionSpec, InterpreterState};
 use super::break_cmd::BuiltinResult;
+use crate::interpreter::types::{CompletionSpec, InterpreterState};
+use std::collections::{HashMap, HashSet};
 
 /// Valid completion options for -o/+o flags
 const VALID_OPTIONS: &[&str] = &[
@@ -68,7 +68,10 @@ pub fn handle_compopt(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             }
             let opt = &args[i];
             if !VALID_OPTIONS.contains(&opt.as_str()) {
-                return BuiltinResult::failure(&format!("compopt: {}: invalid option name\n", opt), 2);
+                return BuiltinResult::failure(
+                    &format!("compopt: {}: invalid option name\n", opt),
+                    2,
+                );
             }
             enable_options.push(opt.clone());
         } else if arg == "+o" {
@@ -79,7 +82,10 @@ pub fn handle_compopt(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             }
             let opt = &args[i];
             if !VALID_OPTIONS.contains(&opt.as_str()) {
-                return BuiltinResult::failure(&format!("compopt: {}: invalid option name\n", opt), 2);
+                return BuiltinResult::failure(
+                    &format!("compopt: {}: invalid option name\n", opt),
+                    2,
+                );
             }
             disable_options.push(opt.clone());
         } else if arg == "--" {
@@ -96,14 +102,15 @@ pub fn handle_compopt(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
     // If -D flag is set, modify default completion
     if is_default {
-        let spec = specs.entry("__default__".to_string()).or_insert_with(|| {
-            CompletionSpec {
+        let spec = specs
+            .entry("__default__".to_string())
+            .or_insert_with(|| CompletionSpec {
                 is_default: Some(true),
                 ..Default::default()
-            }
-        });
+            });
 
-        let mut current_options: HashSet<String> = spec.options
+        let mut current_options: HashSet<String> = spec
+            .options
             .as_ref()
             .map(|o| o.iter().cloned().collect())
             .unwrap_or_default();
@@ -129,9 +136,12 @@ pub fn handle_compopt(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
     // If -E flag is set, modify empty-line completion
     if is_empty_line {
-        let spec = specs.entry("__empty__".to_string()).or_insert_with(CompletionSpec::default);
+        let spec = specs
+            .entry("__empty__".to_string())
+            .or_insert_with(CompletionSpec::default);
 
-        let mut current_options: HashSet<String> = spec.options
+        let mut current_options: HashSet<String> = spec
+            .options
             .as_ref()
             .map(|o| o.iter().cloned().collect())
             .unwrap_or_default();
@@ -158,9 +168,12 @@ pub fn handle_compopt(state: &mut InterpreterState, args: &[String]) -> BuiltinR
     // If command names are provided, modify their completion specs
     if !commands.is_empty() {
         for cmd in &commands {
-            let spec = specs.entry(cmd.clone()).or_insert_with(CompletionSpec::default);
+            let spec = specs
+                .entry(cmd.clone())
+                .or_insert_with(CompletionSpec::default);
 
-            let mut current_options: HashSet<String> = spec.options
+            let mut current_options: HashSet<String> = spec
+                .options
                 .as_ref()
                 .map(|o| o.iter().cloned().collect())
                 .unwrap_or_default();
@@ -199,21 +212,29 @@ mod tests {
     fn test_compopt_enable_option() {
         let mut state = InterpreterState::default();
         state.completion_specs = Some(HashMap::new());
-        state.completion_specs.as_mut().unwrap().insert(
-            "mycommand".to_string(),
-            CompletionSpec::default(),
-        );
+        state
+            .completion_specs
+            .as_mut()
+            .unwrap()
+            .insert("mycommand".to_string(), CompletionSpec::default());
 
-        let result = handle_compopt(&mut state, &[
-            "-o".to_string(),
-            "nospace".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_compopt(
+            &mut state,
+            &[
+                "-o".to_string(),
+                "nospace".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();
         let spec = specs.get("mycommand").unwrap();
-        assert!(spec.options.as_ref().unwrap().contains(&"nospace".to_string()));
+        assert!(spec
+            .options
+            .as_ref()
+            .unwrap()
+            .contains(&"nospace".to_string()));
     }
 
     #[test]
@@ -228,44 +249,61 @@ mod tests {
             },
         );
 
-        let result = handle_compopt(&mut state, &[
-            "+o".to_string(),
-            "nospace".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_compopt(
+            &mut state,
+            &[
+                "+o".to_string(),
+                "nospace".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();
         let spec = specs.get("mycommand").unwrap();
-        assert!(!spec.options.as_ref().unwrap().contains(&"nospace".to_string()));
-        assert!(spec.options.as_ref().unwrap().contains(&"filenames".to_string()));
+        assert!(!spec
+            .options
+            .as_ref()
+            .unwrap()
+            .contains(&"nospace".to_string()));
+        assert!(spec
+            .options
+            .as_ref()
+            .unwrap()
+            .contains(&"filenames".to_string()));
     }
 
     #[test]
     fn test_compopt_default() {
         let mut state = InterpreterState::default();
 
-        let result = handle_compopt(&mut state, &[
-            "-D".to_string(),
-            "-o".to_string(),
-            "nospace".to_string(),
-        ]);
+        let result = handle_compopt(
+            &mut state,
+            &["-D".to_string(), "-o".to_string(), "nospace".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
 
         let specs = state.completion_specs.unwrap();
         let spec = specs.get("__default__").unwrap();
-        assert!(spec.options.as_ref().unwrap().contains(&"nospace".to_string()));
+        assert!(spec
+            .options
+            .as_ref()
+            .unwrap()
+            .contains(&"nospace".to_string()));
     }
 
     #[test]
     fn test_compopt_invalid_option() {
         let mut state = InterpreterState::default();
 
-        let result = handle_compopt(&mut state, &[
-            "-o".to_string(),
-            "invalid".to_string(),
-            "mycommand".to_string(),
-        ]);
+        let result = handle_compopt(
+            &mut state,
+            &[
+                "-o".to_string(),
+                "invalid".to_string(),
+                "mycommand".to_string(),
+            ],
+        );
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("invalid option name"));
     }
@@ -274,11 +312,10 @@ mod tests {
     fn test_compopt_no_command() {
         let mut state = InterpreterState::default();
 
-        let result = handle_compopt(&mut state, &[
-            "-o".to_string(),
-            "nospace".to_string(),
-        ]);
+        let result = handle_compopt(&mut state, &["-o".to_string(), "nospace".to_string()]);
         assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("not currently executing completion function"));
+        assert!(result
+            .stderr
+            .contains("not currently executing completion function"));
     }
 }

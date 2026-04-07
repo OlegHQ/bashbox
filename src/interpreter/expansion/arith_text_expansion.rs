@@ -369,7 +369,10 @@ where
         }
     }
 
-    SubscriptExpansionResult { value: result, stderr }
+    SubscriptExpansionResult {
+        value: result,
+        stderr,
+    }
 }
 
 #[cfg(test)]
@@ -393,7 +396,10 @@ mod tests {
         let state = make_state();
         assert_eq!(expand_dollar_vars_in_arith_text(&state, "$y"), "5");
         assert_eq!(expand_dollar_vars_in_arith_text(&state, "$x"), "1 + 2");
-        assert_eq!(expand_dollar_vars_in_arith_text(&state, "$x * 3"), "1 + 2 * 3");
+        assert_eq!(
+            expand_dollar_vars_in_arith_text(&state, "$x * 3"),
+            "1 + 2 * 3"
+        );
     }
 
     #[test]
@@ -402,7 +408,10 @@ mod tests {
         // ${...} should be preserved for arithmetic parser
         assert_eq!(expand_dollar_vars_in_arith_text(&state, "${x}"), "${x}");
         // $((...)) should be preserved
-        assert_eq!(expand_dollar_vars_in_arith_text(&state, "$((1+2))"), "$((1+2))");
+        assert_eq!(
+            expand_dollar_vars_in_arith_text(&state, "$((1+2))"),
+            "$((1+2))"
+        );
     }
 
     #[test]
@@ -426,7 +435,8 @@ mod tests {
         let state = make_state();
         // With exec function that returns "hello"
         let exec_fn = |_cmd: &str| ("hello\n".to_string(), String::new(), 0);
-        let result = expand_subscript_for_assoc_array_with_exec(&state, "$(echo hello)", Some(exec_fn));
+        let result =
+            expand_subscript_for_assoc_array_with_exec(&state, "$(echo hello)", Some(exec_fn));
         assert_eq!(result.value, "hello");
         assert!(result.stderr.is_empty());
     }
@@ -436,7 +446,8 @@ mod tests {
         let state = make_state();
         // With exec function for backtick
         let exec_fn = |_cmd: &str| ("world\n".to_string(), String::new(), 0);
-        let result = expand_subscript_for_assoc_array_with_exec(&state, "`echo world`", Some(exec_fn));
+        let result =
+            expand_subscript_for_assoc_array_with_exec(&state, "`echo world`", Some(exec_fn));
         assert_eq!(result.value, "world");
     }
 

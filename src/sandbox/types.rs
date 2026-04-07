@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::interpreter::types::ExecResult;
+use std::collections::HashMap;
 
 /// Output message type (stdout or stderr)
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +37,10 @@ pub struct RunCommandOptions {
 #[derive(Debug, Clone)]
 pub enum FileContent {
     Text(String),
-    Encoded { content: String, encoding: FileEncoding },
+    Encoded {
+        content: String,
+        encoding: FileEncoding,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,11 +97,7 @@ mod tests {
 
     #[test]
     fn test_sandbox_command_from_exec_result() {
-        let result = ExecResult::new(
-            "hello\n".to_string(),
-            "warn\n".to_string(),
-            42,
-        );
+        let result = ExecResult::new("hello\n".to_string(), "warn\n".to_string(), 42);
         let cmd = SandboxCommand::from_exec_result(&result);
         assert_eq!(cmd.exit_code, 42);
         assert_eq!(cmd.stdout, "hello\n");

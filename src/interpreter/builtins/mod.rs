@@ -11,6 +11,7 @@ pub mod continue_cmd;
 pub mod declare_array_parsing;
 pub mod declare_cmd;
 pub mod declare_print;
+pub mod declare_syntax;
 pub mod dirs_cmd;
 pub mod eval_cmd;
 pub mod exit_cmd;
@@ -47,8 +48,8 @@ pub use declare_print::{
 };
 pub use dirs_cmd::{handle_dirs, handle_popd, handle_pushd};
 pub use eval_cmd::{
-    handle_eval_parse, parse_eval_args, prepare_eval_stdin, restore_eval_stdin,
-    eval_parse_error, EvalCommand,
+    eval_parse_error, handle_eval_parse, parse_eval_args, prepare_eval_stdin, restore_eval_stdin,
+    EvalCommand,
 };
 pub use exit_cmd::handle_exit;
 pub use export_cmd::handle_export;
@@ -64,13 +65,12 @@ pub use set_cmd::handle_set;
 pub use shift_cmd::handle_shift;
 pub use shopt_cmd::handle_shopt;
 pub use source_cmd::{
-    handle_source_parse, parse_source_args, prepare_source_state, restore_source_state,
-    resolve_source_paths, source_file_not_found, source_parse_error,
-    SourceCommand, SourceSavedState,
+    handle_source_parse, parse_source_args, prepare_source_state, resolve_source_paths,
+    restore_source_state, source_file_not_found, source_parse_error, SourceCommand,
+    SourceSavedState,
 };
 pub use unset_cmd::handle_unset;
 pub use variable_assignment::{
-    parse_assignment, set_variable, get_local_var_depth, clear_local_var_depth,
-    push_local_var_stack, pop_local_var_stack, clear_local_var_stack_for_scope,
-    ParsedAssignment, SetVariableOptions,
+    clear_local_var_depth, clear_local_var_stack_for_scope, get_local_var_depth, parse_assignment,
+    pop_local_var_stack, push_local_var_stack, set_variable, ParsedAssignment, SetVariableOptions,
 };

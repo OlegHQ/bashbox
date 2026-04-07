@@ -3,6 +3,7 @@
 //! Core types and traits for the virtual file system.
 
 use async_trait::async_trait;
+use base64::Engine;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -293,21 +294,13 @@ pub fn to_buffer(content: &FileContent, encoding: BufferEncoding) -> Vec<u8> {
     match content {
         FileContent::Binary(bytes) => bytes.clone(),
         FileContent::Text(text) => match encoding {
-            BufferEncoding::Base64 => {
-                // Decode base64 string to bytes
-                base64_decode(text)
-            }
-            BufferEncoding::Hex => {
-                // Decode hex string to bytes
-                hex_decode(text)
-            }
+            BufferEncoding::Base64 => decode_base64(text),
+            BufferEncoding::Hex => decode_hex(text),
             BufferEncoding::Binary | BufferEncoding::Latin1 => {
                 // Each char becomes a byte (truncated to 8 bits)
                 text.chars().map(|c| c as u8).collect()
             }
-            BufferEncoding::Utf8 | BufferEncoding::Ascii => {
-                text.as_bytes().to_vec()
-            }
+            BufferEncoding::Utf8 | BufferEncoding::Ascii => text.as_bytes().to_vec(),
         },
     }
 }
@@ -315,104 +308,34 @@ pub fn to_buffer(content: &FileContent, encoding: BufferEncoding) -> Vec<u8> {
 /// Convert bytes to string with encoding
 pub fn from_buffer(buffer: &[u8], encoding: BufferEncoding) -> String {
     match encoding {
-        BufferEncoding::Base64 => base64_encode(buffer),
-        BufferEncoding::Hex => hex_encode(buffer),
+        BufferEncoding::Base64 => encode_base64(buffer),
+        BufferEncoding::Hex => encode_hex(buffer),
         BufferEncoding::Binary | BufferEncoding::Latin1 => {
             buffer.iter().map(|&b| b as char).collect()
         }
-        BufferEncoding::Utf8 | BufferEncoding::Ascii => {
-            String::from_utf8_lossy(buffer).to_string()
-        }
+        BufferEncoding::Utf8 | BufferEncoding::Ascii => String::from_utf8_lossy(buffer).to_string(),
     }
 }
 
-/// Simple base64 encoding
-fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::new();
-
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as usize;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
-
-        result.push(ALPHABET[b0 >> 2] as char);
-        result.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
-
-        if chunk.len() > 1 {
-            result.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
-        } else {
-            result.push('=');
-        }
-
-        if chunk.len() > 2 {
-            result.push(ALPHABET[b2 & 0x3f] as char);
-        } else {
-            result.push('=');
-        }
-    }
-
-    result
+fn encode_base64(data: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(data)
 }
 
-/// Simple base64 decoding
-fn base64_decode(s: &str) -> Vec<u8> {
-    const DECODE: [i8; 128] = [
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
-        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
-        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
-        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
-        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
-        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
-    ];
-
-    let mut result = Vec::new();
-    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'=' && b < 128 && DECODE[b as usize] >= 0).collect();
-
-    for chunk in bytes.chunks(4) {
-        if chunk.len() < 2 {
-            break;
-        }
-
-        let b0 = DECODE[chunk[0] as usize] as u8;
-        let b1 = DECODE[chunk[1] as usize] as u8;
-        result.push((b0 << 2) | (b1 >> 4));
-
-        if chunk.len() > 2 {
-            let b2 = DECODE[chunk[2] as usize] as u8;
-            result.push((b1 << 4) | (b2 >> 2));
-
-            if chunk.len() > 3 {
-                let b3 = DECODE[chunk[3] as usize] as u8;
-                result.push((b2 << 6) | b3);
-            }
-        }
-    }
-
-    result
+fn decode_base64(input: &str) -> Vec<u8> {
+    let cleaned: String = input.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(cleaned)
+        .unwrap_or_default()
 }
 
-/// Simple hex encoding
-fn hex_encode(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect()
+fn encode_hex(data: &[u8]) -> String {
+    hex::encode(data)
 }
 
-/// Simple hex decoding
-fn hex_decode(s: &str) -> Vec<u8> {
-    let mut result = Vec::new();
-    let chars: Vec<char> = s.chars().collect();
-
-    for chunk in chars.chunks(2) {
-        if chunk.len() == 2 {
-            if let Ok(byte) = u8::from_str_radix(&format!("{}{}", chunk[0], chunk[1]), 16) {
-                result.push(byte);
-            }
-        }
-    }
-
-    result
+fn decode_hex(input: &str) -> Vec<u8> {
+    let cleaned: String = input.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    let even_len = cleaned.len() - (cleaned.len() % 2);
+    hex::decode(&cleaned[..even_len]).unwrap_or_default()
 }
 
 // ============================================================================
@@ -426,8 +349,14 @@ mod tests {
     #[test]
     fn test_buffer_encoding_from_str() {
         assert_eq!(BufferEncoding::from_str("utf8"), Some(BufferEncoding::Utf8));
-        assert_eq!(BufferEncoding::from_str("UTF-8"), Some(BufferEncoding::Utf8));
-        assert_eq!(BufferEncoding::from_str("base64"), Some(BufferEncoding::Base64));
+        assert_eq!(
+            BufferEncoding::from_str("UTF-8"),
+            Some(BufferEncoding::Utf8)
+        );
+        assert_eq!(
+            BufferEncoding::from_str("base64"),
+            Some(BufferEncoding::Base64)
+        );
         assert_eq!(BufferEncoding::from_str("hex"), Some(BufferEncoding::Hex));
         assert_eq!(BufferEncoding::from_str("invalid"), None);
     }
@@ -435,20 +364,20 @@ mod tests {
     #[test]
     fn test_base64_encode_decode() {
         let data = b"Hello, World!";
-        let encoded = base64_encode(data);
+        let encoded = encode_base64(data);
         assert_eq!(encoded, "SGVsbG8sIFdvcmxkIQ==");
 
-        let decoded = base64_decode(&encoded);
+        let decoded = decode_base64(&encoded);
         assert_eq!(decoded, data);
     }
 
     #[test]
     fn test_hex_encode_decode() {
         let data = b"Hello";
-        let encoded = hex_encode(data);
+        let encoded = encode_hex(data);
         assert_eq!(encoded, "48656c6c6f");
 
-        let decoded = hex_decode(&encoded);
+        let decoded = decode_hex(&encoded);
         assert_eq!(decoded, data);
     }
 

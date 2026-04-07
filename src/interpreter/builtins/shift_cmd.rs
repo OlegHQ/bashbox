@@ -9,9 +9,9 @@
 //! In POSIX mode (set -o posix), errors from shift (like shift count
 //! exceeding available parameters) cause the script to exit immediately.
 
+use super::break_cmd::BuiltinResult;
 use crate::interpreter::errors::{InterpreterError, PosixFatalError};
 use crate::interpreter::types::InterpreterState;
-use super::break_cmd::BuiltinResult;
 
 /// Handle the shift builtin command.
 ///
@@ -21,7 +21,10 @@ use super::break_cmd::BuiltinResult;
 ///
 /// # Returns
 /// Ok(BuiltinResult) for success/failure, Err for POSIX fatal errors
-pub fn handle_shift(state: &mut InterpreterState, args: &[String]) -> Result<BuiltinResult, InterpreterError> {
+pub fn handle_shift(
+    state: &mut InterpreterState,
+    args: &[String],
+) -> Result<BuiltinResult, InterpreterError> {
     // Default shift count is 1
     let mut n = 1i32;
 
@@ -42,9 +45,7 @@ pub fn handle_shift(state: &mut InterpreterState, args: &[String]) -> Result<Bui
     }
 
     // Get current positional parameter count
-    let current_count: i32 = state.env.get("#")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let current_count: i32 = state.env.get("#").and_then(|s| s.parse().ok()).unwrap_or(0);
 
     // Check if shift count exceeds available parameters
     if n > current_count {
@@ -81,7 +82,9 @@ pub fn handle_shift(state: &mut InterpreterState, args: &[String]) -> Result<Bui
     }
 
     // Update $# and $@
-    state.env.insert("#".to_string(), new_params.len().to_string());
+    state
+        .env
+        .insert("#".to_string(), new_params.len().to_string());
     state.env.insert("@".to_string(), new_params.join(" "));
 
     Ok(BuiltinResult::ok())

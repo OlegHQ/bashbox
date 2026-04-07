@@ -12,20 +12,8 @@ use std::sync::LazyLock;
 /// - Errors may be fatal
 pub static POSIX_SPECIAL_BUILTINS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     HashSet::from([
-        ":",
-        ".",
-        "break",
-        "continue",
-        "eval",
-        "exec",
-        "exit",
-        "export",
-        "readonly",
-        "return",
-        "set",
-        "shift",
-        "trap",
-        "unset",
+        ":", ".", "break", "continue", "eval", "exec", "exit", "export", "readonly", "return",
+        "set", "shift", "trap", "unset",
     ])
 });
 
@@ -37,27 +25,8 @@ pub fn is_posix_special_builtin(name: &str) -> bool {
 /// Shell keywords (for type, command -v, etc.)
 pub static SHELL_KEYWORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     HashSet::from([
-        "if",
-        "then",
-        "else",
-        "elif",
-        "fi",
-        "case",
-        "esac",
-        "for",
-        "select",
-        "while",
-        "until",
-        "do",
-        "done",
-        "in",
-        "function",
-        "{",
-        "}",
-        "time",
-        "[[",
-        "]]",
-        "!",
+        "if", "then", "else", "elif", "fi", "case", "esac", "for", "select", "while", "until",
+        "do", "done", "in", "function", "{", "}", "time", "[[", "]]", "!",
     ])
 });
 

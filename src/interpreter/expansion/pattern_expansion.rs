@@ -355,7 +355,10 @@ where
         i += 1;
     }
 
-    PatternExpansionResult { value: result, stderr }
+    PatternExpansionResult {
+        value: result,
+        stderr,
+    }
 }
 
 /// Expand variables within a glob/extglob pattern string with command substitution support.
@@ -415,7 +418,8 @@ where
             if let Some(close) = close_idx {
                 let content: String = chars[i + 1..close].iter().collect();
                 // Recursively expand (including command substitutions) in the double-quoted content
-                let expanded = expand_variables_in_double_quoted_pattern_with_exec(state, &content, &exec_fn);
+                let expanded =
+                    expand_variables_in_double_quoted_pattern_with_exec(state, &content, &exec_fn);
                 stderr.push_str(&expanded.stderr);
                 // Escape glob metacharacters so they match literally
                 result.push_str(&escape_glob_chars(&expanded.value));
@@ -506,7 +510,10 @@ where
         i += 1;
     }
 
-    PatternExpansionResult { value: result, stderr }
+    PatternExpansionResult {
+        value: result,
+        stderr,
+    }
 }
 
 #[cfg(test)]
@@ -539,7 +546,10 @@ mod tests {
         let state = make_state();
         assert_eq!(expand_variables_in_pattern(&state, "$foo"), "bar");
         assert_eq!(expand_variables_in_pattern(&state, "${foo}"), "bar");
-        assert_eq!(expand_variables_in_pattern(&state, "@($foo|$x)"), "@(bar|123)");
+        assert_eq!(
+            expand_variables_in_pattern(&state, "@($foo|$x)"),
+            "@(bar|123)"
+        );
         // Single-quoted content is literal, $ is not a glob metachar so not escaped
         assert_eq!(expand_variables_in_pattern(&state, "'$foo'"), "$foo");
     }

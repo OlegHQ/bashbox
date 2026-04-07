@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct OdCommand;
 
@@ -109,10 +110,7 @@ impl Command for OdCommand {
             match ctx.fs.read_file(&path).await {
                 Ok(content) => content,
                 Err(_) => {
-                    return CommandResult::error(format!(
-                        "od: {}: No such file or directory\n",
-                        files[0]
-                    ));
+                    return CommandResult::error(no_such_file("od", &files[0]));
                 }
             }
         } else {
@@ -125,19 +123,30 @@ impl Command for OdCommand {
         let mut lines = Vec::new();
 
         for offset in (0..bytes.len()).step_by(bytes_per_line) {
-            let chunk: Vec<u8> = bytes[offset..].iter().take(bytes_per_line).copied().collect();
+            let chunk: Vec<u8> = bytes[offset..]
+                .iter()
+                .take(bytes_per_line)
+                .copied()
+                .collect();
 
             for (fmt_idx, fmt) in formats.iter().enumerate() {
                 let formatted: Vec<String> = match fmt {
                     OutputFormat::Char => chunk.iter().map(|&b| format_char_byte(b)).collect(),
-                    OutputFormat::Hex => chunk.iter().map(|&b| format_hex_byte(b, has_char)).collect(),
+                    OutputFormat::Hex => chunk
+                        .iter()
+                        .map(|&b| format_hex_byte(b, has_char))
+                        .collect(),
                     OutputFormat::Octal => chunk.iter().map(|&b| format_octal_byte(b)).collect(),
                 };
 
                 let prefix = if fmt_idx == 0 && address_mode {
                     format!("{:07o} ", offset)
                 } else if fmt_idx > 0 || !address_mode {
-                    if address_mode { "        ".to_string() } else { String::new() }
+                    if address_mode {
+                        "        ".to_string()
+                    } else {
+                        String::new()
+                    }
                 } else {
                     String::new()
                 };
@@ -161,9 +170,9 @@ impl Command for OdCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -177,7 +186,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = OdCommand.execute(ctx).await;
@@ -185,7 +194,7 @@ mod tests {
         assert!(result.stdout.contains("-c"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_octal_output() {
         let mut ctx = create_ctx(vec![]);
         ctx.stdin = "AB".to_string();
@@ -194,7 +203,7 @@ mod tests {
         assert!(result.stdout.contains("102"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_char_output() {
         let mut ctx = create_ctx(vec!["-c"]);
         ctx.stdin = "AB".to_string();
@@ -203,7 +212,7 @@ mod tests {
         assert!(result.stdout.contains("B"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_hex_output() {
         let mut ctx = create_ctx(vec!["-t", "x1"]);
         ctx.stdin = "AB".to_string();

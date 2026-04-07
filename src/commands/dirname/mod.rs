@@ -1,6 +1,7 @@
 // src/commands/dirname/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct DirnameCommand;
 
@@ -13,12 +14,13 @@ impl Command for DirnameCommand {
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
 
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: dirname [OPTION] NAME...\n\n\
                  Strip last component from file name.\n\n\
                  Options:\n\
-                       --help       display this help and exit\n".to_string()
+                       --help       display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -48,23 +50,9 @@ impl Command for DirnameCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_simple() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec!["/usr/bin/sort"])).await;
@@ -72,7 +60,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_no_slash() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec!["stdio.h"])).await;
@@ -80,7 +68,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_root() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec!["/usr"])).await;
@@ -88,7 +76,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_trailing_slash() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec!["/usr/bin/"])).await;
@@ -96,7 +84,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_missing_operand() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec![])).await;
@@ -104,7 +92,7 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_dirname_multiple() {
         let cmd = DirnameCommand;
         let result = cmd.execute(make_ctx(vec!["/a/b", "/c/d"])).await;

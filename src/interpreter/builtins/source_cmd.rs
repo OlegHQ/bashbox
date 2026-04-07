@@ -4,6 +4,7 @@
 //! The actual file reading and script execution require runtime dependencies
 //! (filesystem access, parser, interpreter) that must be provided by the runtime.
 
+use crate::fs::path::normalize_path;
 use crate::interpreter::types::{ExecResult, InterpreterState};
 use std::collections::HashMap;
 
@@ -70,10 +71,7 @@ pub fn handle_source_parse(args: &[String]) -> Result<SourceCommand, BuiltinResu
 ///
 /// Saves current positional parameters and source context,
 /// sets up new positional parameters if provided.
-pub fn prepare_source_state(
-    state: &mut InterpreterState,
-    cmd: &SourceCommand,
-) -> SourceSavedState {
+pub fn prepare_source_state(state: &mut InterpreterState, cmd: &SourceCommand) -> SourceSavedState {
     let mut saved = SourceSavedState {
         positional: HashMap::new(),
         current_source: state.current_source.clone(),
@@ -84,13 +82,21 @@ pub fn prepare_source_state(
         // Save current positional parameters
         for i in 1..=9 {
             let key = i.to_string();
-            saved.positional.insert(key.clone(), state.env.get(&key).cloned());
+            saved
+                .positional
+                .insert(key.clone(), state.env.get(&key).cloned());
         }
-        saved.positional.insert("#".to_string(), state.env.get("#").cloned());
-        saved.positional.insert("@".to_string(), state.env.get("@").cloned());
+        saved
+            .positional
+            .insert("#".to_string(), state.env.get("#").cloned());
+        saved
+            .positional
+            .insert("@".to_string(), state.env.get("@").cloned());
 
         // Set new positional parameters
-        state.env.insert("#".to_string(), cmd.script_args.len().to_string());
+        state
+            .env
+            .insert("#".to_string(), cmd.script_args.len().to_string());
         state.env.insert("@".to_string(), cmd.script_args.join(" "));
         for (i, arg) in cmd.script_args.iter().enumerate() {
             if i < 9 {
@@ -146,11 +152,7 @@ pub fn source_parse_error(filename: &str, message: &str) -> ExecResult {
 /// Otherwise, search in PATH first, then current directory.
 ///
 /// Returns a list of candidate paths to try, in order.
-pub fn resolve_source_paths(
-    cwd: &str,
-    filename: &str,
-    path_env: Option<&str>,
-) -> Vec<String> {
+pub fn resolve_source_paths(cwd: &str, filename: &str, path_env: Option<&str>) -> Vec<String> {
     let mut candidates = Vec::new();
 
     if filename.contains('/') {
@@ -179,29 +181,6 @@ pub fn resolve_source_paths(
     }
 
     candidates
-}
-
-/// Normalize a path by resolving . and .. components.
-fn normalize_path(path: &str) -> String {
-    let mut components: Vec<&str> = Vec::new();
-
-    for component in path.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                components.pop();
-            }
-            c => {
-                components.push(c);
-            }
-        }
-    }
-
-    if path.starts_with('/') {
-        format!("/{}", components.join("/"))
-    } else {
-        components.join("/")
-    }
 }
 
 // ============================================================================
@@ -233,7 +212,11 @@ mod tests {
 
     #[test]
     fn test_parse_source_args_with_args() {
-        let args = vec!["script.sh".to_string(), "arg1".to_string(), "arg2".to_string()];
+        let args = vec![
+            "script.sh".to_string(),
+            "arg1".to_string(),
+            "arg2".to_string(),
+        ];
         let result = parse_source_args(&args);
         assert!(result.is_ok());
         let cmd = result.unwrap();
@@ -265,11 +248,14 @@ mod tests {
     #[test]
     fn test_resolve_source_paths_no_slash() {
         let paths = resolve_source_paths("/home/user", "script.sh", Some("/bin:/usr/bin"));
-        assert_eq!(paths, vec![
-            "/bin/script.sh",
-            "/usr/bin/script.sh",
-            "/home/user/script.sh",
-        ]);
+        assert_eq!(
+            paths,
+            vec![
+                "/bin/script.sh",
+                "/usr/bin/script.sh",
+                "/home/user/script.sh",
+            ]
+        );
     }
 
     #[test]

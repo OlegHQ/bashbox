@@ -26,16 +26,16 @@ fn dollar_quote(value: &str) -> String {
         let code = c as u32;
 
         match code {
-            0x07 => result.push_str("\\a"),   // bell
-            0x08 => result.push_str("\\b"),   // backspace
-            0x09 => result.push_str("\\t"),   // tab
-            0x0a => result.push_str("\\n"),   // newline
-            0x0b => result.push_str("\\v"),   // vertical tab
-            0x0c => result.push_str("\\f"),   // form feed
-            0x0d => result.push_str("\\r"),   // carriage return
-            0x1b => result.push_str("\\e"),   // escape (bash extension)
-            0x27 => result.push_str("\\'"),   // single quote
-            0x5c => result.push_str("\\\\"),  // backslash
+            0x07 => result.push_str("\\a"),  // bell
+            0x08 => result.push_str("\\b"),  // backspace
+            0x09 => result.push_str("\\t"),  // tab
+            0x0a => result.push_str("\\n"),  // newline
+            0x0b => result.push_str("\\v"),  // vertical tab
+            0x0c => result.push_str("\\f"),  // form feed
+            0x0d => result.push_str("\\r"),  // carriage return
+            0x1b => result.push_str("\\e"),  // escape (bash extension)
+            0x27 => result.push_str("\\'"),  // single quote
+            0x5c => result.push_str("\\\\"), // backslash
             _ if code < 0x20 || code == 0x7f => {
                 // Other control characters: use octal notation (bash uses \NNN)
                 result.push_str(&format!("\\{:03o}", code));
@@ -141,7 +141,10 @@ mod tests {
         assert_eq!(quote_array_value("hello"), "\"hello\"");
         assert_eq!(quote_array_value("hello world"), "\"hello world\"");
         assert_eq!(quote_array_value("with\"quote"), "\"with\\\"quote\"");
-        assert_eq!(quote_array_value("with\\backslash"), "\"with\\\\backslash\"");
+        assert_eq!(
+            quote_array_value("with\\backslash"),
+            "\"with\\\\backslash\""
+        );
     }
 
     #[test]

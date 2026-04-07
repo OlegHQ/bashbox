@@ -9,11 +9,13 @@
 //! - case statements
 //! - break/continue
 
-use regex_lite::Regex;
-use crate::interpreter::types::{InterpreterState, ExecResult};
+use brush_parser::ast as bast;
+
+use crate::interpreter::errors::{ExecutionLimitError, InterpreterError, LimitType};
 use crate::interpreter::helpers::condition::{execute_condition, ConditionResult};
 use crate::interpreter::helpers::loop_helpers::{handle_loop_error, LoopAction};
-use crate::interpreter::errors::{InterpreterError, ExecutionLimitError, LimitType};
+use crate::interpreter::types::{ExecResult, InterpreterState};
+use regex_lite::Regex;
 
 /// Validate that a variable name is a valid identifier.
 /// Returns true if valid, false otherwise.
@@ -52,6 +54,17 @@ impl CaseTerminator {
             CaseTerminator::ContinueMatching => ";;&",
         }
     }
+
+    /// Convert from brush-parser CaseItemPostAction.
+    pub fn from_post_action(action: &bast::CaseItemPostAction) -> Self {
+        match action {
+            bast::CaseItemPostAction::ExitCase => CaseTerminator::Break,
+            bast::CaseItemPostAction::UnconditionallyExecuteNextCaseItem => {
+                CaseTerminator::FallThrough
+            }
+            bast::CaseItemPostAction::ContinueEvaluatingCases => CaseTerminator::ContinueMatching,
+        }
+    }
 }
 
 // ============================================================================
@@ -68,7 +81,11 @@ pub struct IfResult {
 
 impl IfResult {
     pub fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
     }
 }
 
@@ -141,7 +158,11 @@ pub struct ForResult {
 
 impl ForResult {
     pub fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
     }
 }
 
@@ -215,10 +236,16 @@ where
                         stdout = loop_result.stdout;
                         stderr = loop_result.stderr;
                         match loop_result.action {
-                            LoopAction::Break => return Ok(ForResult::new(stdout, stderr, exit_code)),
+                            LoopAction::Break => {
+                                return Ok(ForResult::new(stdout, stderr, exit_code))
+                            }
                             LoopAction::Continue => break,
                             LoopAction::Error => {
-                                return Ok(ForResult::new(stdout, stderr, loop_result.exit_code.unwrap_or(1)));
+                                return Ok(ForResult::new(
+                                    stdout,
+                                    stderr,
+                                    loop_result.exit_code.unwrap_or(1),
+                                ));
                             }
                             LoopAction::Rethrow => {
                                 return Err(loop_result.error.unwrap());
@@ -305,10 +332,16 @@ where
                         stdout = loop_result.stdout;
                         stderr = loop_result.stderr;
                         match loop_result.action {
-                            LoopAction::Break => return Ok(ForResult::new(stdout, stderr, exit_code)),
+                            LoopAction::Break => {
+                                return Ok(ForResult::new(stdout, stderr, exit_code))
+                            }
                             LoopAction::Continue => break,
                             LoopAction::Error => {
-                                return Ok(ForResult::new(stdout, stderr, loop_result.exit_code.unwrap_or(1)));
+                                return Ok(ForResult::new(
+                                    stdout,
+                                    stderr,
+                                    loop_result.exit_code.unwrap_or(1),
+                                ));
                             }
                             LoopAction::Rethrow => {
                                 return Err(loop_result.error.unwrap());
@@ -396,10 +429,16 @@ where
                         stdout = loop_result.stdout;
                         stderr = loop_result.stderr;
                         match loop_result.action {
-                            LoopAction::Break => return Ok(ForResult::new(stdout, stderr, exit_code)),
+                            LoopAction::Break => {
+                                return Ok(ForResult::new(stdout, stderr, exit_code))
+                            }
                             LoopAction::Continue => break,
                             LoopAction::Error => {
-                                return Ok(ForResult::new(stdout, stderr, loop_result.exit_code.unwrap_or(1)));
+                                return Ok(ForResult::new(
+                                    stdout,
+                                    stderr,
+                                    loop_result.exit_code.unwrap_or(1),
+                                ));
                             }
                             LoopAction::Rethrow => {
                                 return Err(loop_result.error.unwrap());
@@ -442,7 +481,7 @@ pub fn execute_case<P, B, F1, F2, E>(
     mut body_executor: F2,
 ) -> Result<ForResult, E>
 where
-    F1: FnMut(&InterpreterState, &str, &P) -> Result<bool, E>,
+    F1: FnMut(&mut InterpreterState, &str, &P) -> Result<bool, E>,
     F2: FnMut(&mut InterpreterState, &B) -> Result<ExecResult, E>,
 {
     let mut stdout = String::new();
@@ -505,12 +544,36 @@ mod tests {
     #[test]
     fn test_case_terminator() {
         assert_eq!(CaseTerminator::from_str(";;"), Some(CaseTerminator::Break));
-        assert_eq!(CaseTerminator::from_str(";&"), Some(CaseTerminator::FallThrough));
-        assert_eq!(CaseTerminator::from_str(";;&"), Some(CaseTerminator::ContinueMatching));
+        assert_eq!(
+            CaseTerminator::from_str(";&"),
+            Some(CaseTerminator::FallThrough)
+        );
+        assert_eq!(
+            CaseTerminator::from_str(";;&"),
+            Some(CaseTerminator::ContinueMatching)
+        );
         assert_eq!(CaseTerminator::from_str("invalid"), None);
 
         assert_eq!(CaseTerminator::Break.as_str(), ";;");
         assert_eq!(CaseTerminator::FallThrough.as_str(), ";&");
         assert_eq!(CaseTerminator::ContinueMatching.as_str(), ";;&");
+    }
+
+    #[test]
+    fn test_case_terminator_from_post_action() {
+        assert_eq!(
+            CaseTerminator::from_post_action(&bast::CaseItemPostAction::ExitCase),
+            CaseTerminator::Break
+        );
+        assert_eq!(
+            CaseTerminator::from_post_action(
+                &bast::CaseItemPostAction::UnconditionallyExecuteNextCaseItem
+            ),
+            CaseTerminator::FallThrough
+        );
+        assert_eq!(
+            CaseTerminator::from_post_action(&bast::CaseItemPostAction::ContinueEvaluatingCases),
+            CaseTerminator::ContinueMatching
+        );
     }
 }

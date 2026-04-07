@@ -2,9 +2,9 @@
 //!
 //! Implements bash's shopt builtin for managing shell-specific options
 
+use super::break_cmd::BuiltinResult;
 use crate::interpreter::helpers::shellopts::{update_bashopts, update_shellopts};
 use crate::interpreter::types::InterpreterState;
-use super::break_cmd::BuiltinResult;
 
 /// All supported shopt options
 const SHOPT_OPTIONS: &[&str] = &[
@@ -114,11 +114,11 @@ fn set_shopt_value(state: &mut InterpreterState, name: &str, value: bool) {
 /// Handle the shopt builtin command.
 pub fn handle_shopt(state: &mut InterpreterState, args: &[String]) -> BuiltinResult {
     // Parse arguments
-    let mut set_flag = false;    // -s: set option
-    let mut unset_flag = false;  // -u: unset option
-    let mut print_flag = false;  // -p: print in reusable form
-    let mut quiet_flag = false;  // -q: suppress output, only set exit code
-    let mut o_flag = false;      // -o: use set -o option names
+    let mut set_flag = false; // -s: set option
+    let mut unset_flag = false; // -u: unset option
+    let mut print_flag = false; // -p: print in reusable form
+    let mut quiet_flag = false; // -q: suppress output, only set exit code
+    let mut o_flag = false; // -o: use set -o option names
     let mut option_names: Vec<&str> = Vec::new();
 
     let mut i = 0;
@@ -158,7 +158,14 @@ pub fn handle_shopt(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
 
     // -o flag: use set -o option names instead of shopt options
     if o_flag {
-        return handle_set_options(state, &option_names, set_flag, unset_flag, print_flag, quiet_flag);
+        return handle_set_options(
+            state,
+            &option_names,
+            set_flag,
+            unset_flag,
+            print_flag,
+            quiet_flag,
+        );
     }
 
     // If -s and -u are both set, that's an error
@@ -191,7 +198,11 @@ pub fn handle_shopt(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
                 }
             }
             return BuiltinResult {
-                stdout: if output.is_empty() { String::new() } else { format!("{}\n", output.join("\n")) },
+                stdout: if output.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}\n", output.join("\n"))
+                },
                 stderr: String::new(),
                 exit_code: 0,
             };
@@ -248,7 +259,11 @@ pub fn handle_shopt(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
                         has_error = true;
                     }
                 } else if print_flag {
-                    output.push(format!("shopt {} {}", if value { "-s" } else { "-u" }, name));
+                    output.push(format!(
+                        "shopt {} {}",
+                        if value { "-s" } else { "-u" },
+                        name
+                    ));
                     if !value {
                         has_error = true;
                     }
@@ -274,7 +289,11 @@ pub fn handle_shopt(state: &mut InterpreterState, args: &[String]) -> BuiltinRes
     }
 
     BuiltinResult {
-        stdout: if output.is_empty() { String::new() } else { format!("{}\n", output.join("\n")) },
+        stdout: if output.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", output.join("\n"))
+        },
         stderr,
         exit_code: if has_error { 1 } else { 0 },
     }
@@ -290,18 +309,64 @@ fn handle_set_options(
     quiet_flag: bool,
 ) -> BuiltinResult {
     // Map set -o option names to ShellOptions fields
-    const SET_OPTIONS: &[(&str, fn(&InterpreterState) -> bool, fn(&mut InterpreterState, bool))] = &[
-        ("allexport", |s| s.options.allexport, |s, v| s.options.allexport = v),
-        ("emacs", |s| s.options.emacs, |s, v| { s.options.emacs = v; if v { s.options.vi = false; } }),
-        ("errexit", |s| s.options.errexit, |s, v| s.options.errexit = v),
-        ("noclobber", |s| s.options.noclobber, |s, v| s.options.noclobber = v),
+    const SET_OPTIONS: &[(
+        &str,
+        fn(&InterpreterState) -> bool,
+        fn(&mut InterpreterState, bool),
+    )] = &[
+        (
+            "allexport",
+            |s| s.options.allexport,
+            |s, v| s.options.allexport = v,
+        ),
+        (
+            "emacs",
+            |s| s.options.emacs,
+            |s, v| {
+                s.options.emacs = v;
+                if v {
+                    s.options.vi = false;
+                }
+            },
+        ),
+        (
+            "errexit",
+            |s| s.options.errexit,
+            |s, v| s.options.errexit = v,
+        ),
+        (
+            "noclobber",
+            |s| s.options.noclobber,
+            |s, v| s.options.noclobber = v,
+        ),
         ("noexec", |s| s.options.noexec, |s, v| s.options.noexec = v),
         ("noglob", |s| s.options.noglob, |s, v| s.options.noglob = v),
-        ("nounset", |s| s.options.nounset, |s, v| s.options.nounset = v),
-        ("pipefail", |s| s.options.pipefail, |s, v| s.options.pipefail = v),
+        (
+            "nounset",
+            |s| s.options.nounset,
+            |s, v| s.options.nounset = v,
+        ),
+        (
+            "pipefail",
+            |s| s.options.pipefail,
+            |s, v| s.options.pipefail = v,
+        ),
         ("posix", |s| s.options.posix, |s, v| s.options.posix = v),
-        ("verbose", |s| s.options.verbose, |s, v| s.options.verbose = v),
-        ("vi", |s| s.options.vi, |s, v| { s.options.vi = v; if v { s.options.emacs = false; } }),
+        (
+            "verbose",
+            |s| s.options.verbose,
+            |s, v| s.options.verbose = v,
+        ),
+        (
+            "vi",
+            |s| s.options.vi,
+            |s, v| {
+                s.options.vi = v;
+                if v {
+                    s.options.emacs = false;
+                }
+            },
+        ),
         ("xtrace", |s| s.options.xtrace, |s, v| s.options.xtrace = v),
     ];
 
@@ -324,7 +389,12 @@ fn handle_set_options(
         "privileged",
     ];
 
-    fn find_set_option(name: &str) -> Option<(fn(&InterpreterState) -> bool, fn(&mut InterpreterState, bool))> {
+    fn find_set_option(
+        name: &str,
+    ) -> Option<(
+        fn(&InterpreterState) -> bool,
+        fn(&mut InterpreterState, bool),
+    )> {
         for (opt_name, getter, setter) in SET_OPTIONS {
             if *opt_name == name {
                 return Some((*getter, *setter));
@@ -352,8 +422,12 @@ fn handle_set_options(
                 false
             };
 
-            if set_flag && !value { continue; }
-            if unset_flag && value { continue; }
+            if set_flag && !value {
+                continue;
+            }
+            if unset_flag && value {
+                continue;
+            }
 
             output.push(if print_flag {
                 format!("set {} {}", if value { "-o" } else { "+o" }, opt)
@@ -363,7 +437,11 @@ fn handle_set_options(
         }
 
         return BuiltinResult {
-            stdout: if output.is_empty() { String::new() } else { format!("{}\n", output.join("\n")) },
+            stdout: if output.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", output.join("\n"))
+            },
             stderr: String::new(),
             exit_code: 0,
         };
@@ -429,7 +507,11 @@ fn handle_set_options(
     }
 
     BuiltinResult {
-        stdout: if output.is_empty() { String::new() } else { format!("{}\n", output.join("\n")) },
+        stdout: if output.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", output.join("\n"))
+        },
         stderr,
         exit_code: if has_error { 1 } else { 0 },
     }
@@ -499,7 +581,10 @@ mod tests {
     #[test]
     fn test_shopt_o_flag() {
         let mut state = InterpreterState::default();
-        let result = handle_shopt(&mut state, &["-o".to_string(), "-s".to_string(), "errexit".to_string()]);
+        let result = handle_shopt(
+            &mut state,
+            &["-o".to_string(), "-s".to_string(), "errexit".to_string()],
+        );
         assert_eq!(result.exit_code, 0);
         assert!(state.options.errexit);
     }

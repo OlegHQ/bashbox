@@ -1,13 +1,16 @@
-pub mod types;
-pub mod parser;
+pub mod actions;
 pub mod matcher;
+pub mod parser;
+pub mod types;
 
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
+use crate::commands::errors::no_such_file;
 use crate::commands::types::{Command, CommandContext, CommandResult};
-use crate::fs::RmOptions;
+use crate::commands::vfs_walk::child_path;
+use actions::{apply_delete_and_exec, expression_has_action};
+use async_trait::async_trait;
 use types::*;
 
 pub struct FindCommand;
@@ -27,13 +30,7 @@ impl Command for FindCommand {
 
         for (i, arg) in args.iter().enumerate() {
             let s = arg.as_str();
-            if s.starts_with('-')
-                || s == "("
-                || s == "\\("
-                || s == ")"
-                || s == "\\)"
-                || s == "!"
-            {
+            if s.starts_with('-') || s == "(" || s == "\\(" || s == ")" || s == "\\)" || s == "!" {
                 expr_start = i;
                 break;
             }
@@ -63,21 +60,13 @@ impl Command for FindCommand {
 
         // 3. For each starting path, traverse the directory tree
         for search_path in &search_paths {
-            // Normalize trailing slashes
-            let search_path_clean = if search_path.len() > 1 && search_path.ends_with('/') {
-                &search_path[..search_path.len() - 1]
-            } else {
-                search_path.as_str()
-            };
+            let search_path_clean = normalize_starting_path(search_path);
 
             let base_path = ctx.fs.resolve_path(&ctx.cwd, search_path_clean);
 
             // Check if path exists
             if !ctx.fs.exists(&base_path).await {
-                all_stderr.push_str(&format!(
-                    "find: {}: No such file or directory\n",
-                    search_path_clean
-                ));
+                all_stderr.push_str(&no_such_file("find", search_path_clean));
                 exit_code = 1;
                 continue;
             }
@@ -102,7 +91,8 @@ impl Command for FindCommand {
                     &mut output,
                     &mut all_stderr,
                     &mut exit_code,
-                ).await;
+                )
+                .await;
             } else {
                 // BFS (pre-order): process parents before children
                 traverse_breadth_first(
@@ -117,80 +107,19 @@ impl Command for FindCommand {
                     &mut output,
                     &mut all_stderr,
                     &mut exit_code,
-                ).await;
+                )
+                .await;
             }
 
-            // Handle -delete action
-            if expression_has_delete(&expression) {
-                // Delete in reverse order (deepest first)
-                let mut sorted = matched_paths.clone();
-                sorted.sort_by(|a, b| b.len().cmp(&a.len()));
-                for file in &sorted {
-                    let full_path = ctx.fs.resolve_path(&ctx.cwd, file);
-                    match ctx.fs.rm(&full_path, &RmOptions { recursive: false, force: false }).await {
-                        Ok(()) => {}
-                        Err(e) => {
-                            all_stderr.push_str(&format!("find: cannot delete '{}': {}\n", file, e));
-                            exit_code = 1;
-                        }
-                    }
-                }
-            }
-            // Handle -exec action
-            if let Some((command_parts, batch)) = expression_get_exec(&expression) {
-                if let Some(ref exec_fn) = ctx.exec_fn {
-                    if batch {
-                        // -exec ... + : execute once with all files
-                        let mut cmd_parts: Vec<String> = Vec::new();
-                        for part in &command_parts {
-                            if part == "{}" {
-                                cmd_parts.extend(matched_paths.iter().cloned());
-                            } else {
-                                cmd_parts.push(part.clone());
-                            }
-                        }
-                        let cmd = cmd_parts.iter()
-                            .map(|p| format!("\"{}\"", p))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        let result = exec_fn(
-                            cmd,
-                            String::new(),
-                            ctx.cwd.clone(),
-                            ctx.env.clone(),
-                            ctx.fs.clone(),
-                        ).await;
-                        output.push_str(&result.stdout);
-                        all_stderr.push_str(&result.stderr);
-                        if result.exit_code != 0 {
-                            exit_code = result.exit_code;
-                        }
-                    } else {
-                        // -exec ... ; : execute for each file
-                        for file in &matched_paths {
-                            let cmd_with_file: Vec<String> = command_parts.iter()
-                                .map(|part| if part == "{}" { file.clone() } else { part.clone() })
-                                .collect();
-                            let cmd = cmd_with_file.iter()
-                                .map(|p| format!("\"{}\"", p))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            let result = exec_fn(
-                                cmd,
-                                String::new(),
-                                ctx.cwd.clone(),
-                                ctx.env.clone(),
-                                ctx.fs.clone(),
-                            ).await;
-                            output.push_str(&result.stdout);
-                            all_stderr.push_str(&result.stderr);
-                            if result.exit_code != 0 {
-                                exit_code = result.exit_code;
-                            }
-                        }
-                    }
-                }
-            }
+            apply_delete_and_exec(
+                &ctx,
+                &expression,
+                &matched_paths,
+                &mut output,
+                &mut all_stderr,
+                &mut exit_code,
+            )
+            .await;
 
             all_output.push_str(&output);
         }
@@ -198,40 +127,12 @@ impl Command for FindCommand {
         CommandResult::with_exit_code(all_output, all_stderr, exit_code)
     }
 }
-/// Check if expression tree contains any action (print, print0, printf, delete, exec).
-fn expression_has_action(expr: &Expression) -> bool {
-    match expr {
-        Expression::Print | Expression::Print0 | Expression::Printf { .. }
-        | Expression::Delete | Expression::Exec { .. } => true,
-        Expression::Not(inner) => expression_has_action(inner),
-        Expression::And(left, right) | Expression::Or(left, right) => {
-            expression_has_action(left) || expression_has_action(right)
-        }
-        _ => false,
-    }
-}
 
-/// Check if expression tree contains -delete.
-fn expression_has_delete(expr: &Expression) -> bool {
-    match expr {
-        Expression::Delete => true,
-        Expression::Not(inner) => expression_has_delete(inner),
-        Expression::And(left, right) | Expression::Or(left, right) => {
-            expression_has_delete(left) || expression_has_delete(right)
-        }
-        _ => false,
-    }
-}
-
-/// Extract -exec command parts and batch flag if present.
-fn expression_get_exec(expr: &Expression) -> Option<(Vec<String>, bool)> {
-    match expr {
-        Expression::Exec { command, batch } => Some((command.clone(), *batch)),
-        Expression::Not(inner) => expression_get_exec(inner),
-        Expression::And(left, right) | Expression::Or(left, right) => {
-            expression_get_exec(left).or_else(|| expression_get_exec(right))
-        }
-        _ => None,
+fn normalize_starting_path(search_path: &str) -> &str {
+    if search_path.len() > 1 && search_path.ends_with('/') {
+        &search_path[..search_path.len() - 1]
+    } else {
+        search_path
     }
 }
 
@@ -289,11 +190,7 @@ fn build_eval_context(
 }
 
 /// Compute the relative path for display.
-fn compute_relative_path(
-    current_path: &str,
-    base_path: &str,
-    search_path: &str,
-) -> String {
+fn compute_relative_path(current_path: &str, base_path: &str, search_path: &str) -> String {
     if current_path == base_path {
         search_path.to_string()
     } else if search_path == "." {
@@ -312,7 +209,11 @@ fn compute_relative_path(
 fn compute_name(current_path: &str, base_path: &str, search_path: &str) -> String {
     if current_path == base_path {
         // For the starting point, use the last component of search_path
-        search_path.rsplit('/').next().unwrap_or(search_path).to_string()
+        search_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(search_path)
+            .to_string()
     } else {
         current_path.rsplit('/').next().unwrap_or("").to_string()
     }
@@ -324,6 +225,38 @@ async fn check_dir_empty(ctx: &CommandContext, path: &str) -> bool {
         Ok(entries) => entries.is_empty(),
         Err(_) => false,
     }
+}
+
+/// Stat path and build [`EvalContext`] for matcher (shared by BFS and post-order DFS).
+async fn stat_and_eval_context(
+    ctx: &CommandContext,
+    current_path: &str,
+    base_path: &str,
+    search_path: &str,
+    depth: usize,
+    newer_ref_mtime: Option<SystemTime>,
+) -> Option<(EvalContext, crate::fs::FsStat)> {
+    let stat = ctx.fs.stat(current_path).await.ok()?;
+    let name = compute_name(current_path, base_path, search_path);
+    let relative_path = compute_relative_path(current_path, base_path, search_path);
+    let is_empty = if stat.is_file {
+        stat.size == 0
+    } else if stat.is_directory {
+        check_dir_empty(ctx, current_path).await
+    } else {
+        false
+    };
+    let eval_ctx = build_eval_context(
+        &name,
+        current_path,
+        &relative_path,
+        &stat,
+        depth,
+        is_empty,
+        newer_ref_mtime,
+        search_path,
+    );
+    Some((eval_ctx, stat))
 }
 
 /// Process a single node: evaluate expression, collect output.
@@ -381,36 +314,26 @@ async fn traverse_breadth_first(
             }
         }
 
-        // Stat the entry
-        let stat = match ctx.fs.stat(&current_path).await {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Some((eval_ctx, stat)) = stat_and_eval_context(
+            ctx,
+            &current_path,
+            base_path,
+            search_path,
+            depth,
+            newer_ref_mtime,
+        )
+        .await
+        else {
+            continue;
         };
-
-        let name = compute_name(&current_path, base_path, search_path);
-        let relative_path = compute_relative_path(&current_path, base_path, search_path);
-
-        // Check if empty
-        let is_empty = if stat.is_file {
-            stat.size == 0
-        } else if stat.is_directory {
-            check_dir_empty(ctx, &current_path).await
-        } else {
-            false
-        };
-
-        // Build eval context
-        let eval_ctx = build_eval_context(
-            &name, &current_path, &relative_path, &stat, depth,
-            is_empty, newer_ref_mtime, search_path,
-        );
 
         // Check mindepth
         let at_or_beyond_min = options.min_depth.map_or(true, |min| depth >= min);
 
         let mut pruned = false;
         if at_or_beyond_min {
-            let (_matched, p) = process_node(&eval_ctx, expression, has_action, matched_paths, output);
+            let (_matched, p) =
+                process_node(&eval_ctx, expression, has_action, matched_paths, output);
             pruned = p;
         }
 
@@ -424,16 +347,11 @@ async fn traverse_breadth_first(
             match ctx.fs.readdir_with_file_types(&current_path).await {
                 Ok(entries) => {
                     for entry in entries {
-                        let child_path = if current_path == "/" {
-                            format!("/{}", entry.name)
-                        } else {
-                            format!("{}/{}", current_path, entry.name)
-                        };
-                        queue.push_back((child_path, depth + 1));
+                        queue.push_back((child_path(&current_path, &entry.name), depth + 1));
                     }
                 }
                 Err(e) => {
-                    stderr.push_str(&format!("find: {}: {}\n", relative_path, e));
+                    stderr.push_str(&format!("find: {}: {}\n", eval_ctx.relative_path, e));
                     *exit_code = 1;
                 }
             }
@@ -490,12 +408,8 @@ async fn traverse_depth_first(
                 match ctx.fs.readdir_with_file_types(&current_path).await {
                     Ok(entries) => {
                         for entry in entries {
-                            let child_path = if current_path == "/" {
-                                format!("/{}", entry.name)
-                            } else {
-                                format!("{}/{}", current_path, entry.name)
-                            };
-                            discover_queue.push_back((child_path, depth + 1));
+                            discover_queue
+                                .push_back((child_path(&current_path, &entry.name), depth + 1));
                         }
                     }
                     Err(e) => {
@@ -519,26 +433,18 @@ async fn traverse_depth_first(
     // Phase 2: Process in reverse order (post-order)
     // Since we discovered in BFS order, reversing gives us children-before-parents
     for node_info in nodes.iter().rev() {
-        let stat = match ctx.fs.stat(&node_info.path).await {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Some((eval_ctx, _stat)) = stat_and_eval_context(
+            ctx,
+            &node_info.path,
+            base_path,
+            search_path,
+            node_info.depth,
+            newer_ref_mtime,
+        )
+        .await
+        else {
+            continue;
         };
-
-        let name = compute_name(&node_info.path, base_path, search_path);
-        let relative_path = compute_relative_path(&node_info.path, base_path, search_path);
-
-        let is_empty = if stat.is_file {
-            stat.size == 0
-        } else if stat.is_directory {
-            check_dir_empty(ctx, &node_info.path).await
-        } else {
-            false
-        };
-
-        let eval_ctx = build_eval_context(
-            &name, &node_info.path, &relative_path, &stat, node_info.depth,
-            is_empty, newer_ref_mtime, search_path,
-        );
 
         let at_or_beyond_min = options.min_depth.map_or(true, |min| node_info.depth >= min);
         if at_or_beyond_min {
@@ -549,21 +455,12 @@ async fn traverse_depth_first(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{InMemoryFs, FileSystem, MkdirOptions};
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use crate::commands::test_utils::{self, *};
+    use crate::fs::{FileSystem, InMemoryFs, MkdirOptions};
     use std::time::{Duration, SystemTime};
 
     fn make_ctx(fs: Arc<InMemoryFs>, args: &[&str]) -> CommandContext {
-        CommandContext {
-            args: args.iter().map(|s| s.to_string()).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        test_utils::make_ctx_with_fs(args.iter().map(|s| s.as_ref()).collect(), fs)
     }
 
     fn sorted_lines(s: &str) -> Vec<&str> {
@@ -574,17 +471,31 @@ mod tests {
 
     async fn setup_basic_fs() -> Arc<InMemoryFs> {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/project", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/project/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/project/docs", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/project/src/main.rs", b"fn main() {}").await.unwrap();
-        fs.write_file("/project/src/lib.rs", b"pub mod foo;").await.unwrap();
-        fs.write_file("/project/docs/readme.txt", b"Hello").await.unwrap();
-        fs.write_file("/project/Cargo.toml", b"[package]").await.unwrap();
+        fs.mkdir("/project", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/project/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/project/docs", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/project/src/main.rs", b"fn main() {}")
+            .await
+            .unwrap();
+        fs.write_file("/project/src/lib.rs", b"pub mod foo;")
+            .await
+            .unwrap();
+        fs.write_file("/project/docs/readme.txt", b"Hello")
+            .await
+            .unwrap();
+        fs.write_file("/project/Cargo.toml", b"[package]")
+            .await
+            .unwrap();
         fs
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_all_files() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project"]);
@@ -598,7 +509,7 @@ mod tests {
         assert!(lines.contains(&"/project/docs/readme.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_by_name_pattern() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-name", "*.rs"]);
@@ -610,7 +521,7 @@ mod tests {
         assert!(lines.contains(&"/project/src/lib.rs"));
         assert!(lines.contains(&"/project/src/main.rs"));
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_by_type_files_only() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-type", "f"]);
@@ -625,7 +536,7 @@ mod tests {
         assert!(lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_by_type_dirs_only() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-type", "d"]);
@@ -639,7 +550,7 @@ mod tests {
         assert!(!lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_maxdepth() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-maxdepth", "1"]);
@@ -655,7 +566,7 @@ mod tests {
         assert!(!lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_mindepth() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-mindepth", "2"]);
@@ -669,11 +580,15 @@ mod tests {
         // Should contain depth 2
         assert!(lines.contains(&"/project/src/main.rs"));
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_depth_flag() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/d", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/d/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/d", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/d/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/d/sub/file.txt", b"x").await.unwrap();
         let ctx = make_ctx(fs, &["/d", "-depth"]);
         let cmd = FindCommand;
@@ -688,12 +603,16 @@ mod tests {
         assert!(sub_pos < d_pos);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_empty_file() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/empty.txt", b"").await.unwrap();
-        fs.write_file("/test/notempty.txt", b"content").await.unwrap();
+        fs.write_file("/test/notempty.txt", b"content")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/test", "-empty", "-type", "f"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -702,13 +621,21 @@ mod tests {
         assert_eq!(lines, vec!["/test/empty.txt"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_empty_dir() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/test/emptydir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/test/notemptydir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/test/notemptydir/file.txt", b"x").await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/test/emptydir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/test/notemptydir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/test/notemptydir/file.txt", b"x")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/test", "-empty", "-type", "d"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -717,12 +644,16 @@ mod tests {
         assert_eq!(lines, vec!["/test/emptydir"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_size() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/small.txt", b"hi").await.unwrap();
-        fs.write_file("/test/big.txt", &vec![b'x'; 2048]).await.unwrap();
+        fs.write_file("/test/big.txt", &vec![b'x'; 2048])
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/test", "-size", "+1k", "-type", "f"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -730,7 +661,7 @@ mod tests {
         let lines = sorted_lines(&result.stdout);
         assert_eq!(lines, vec!["/test/big.txt"]);
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_name_and_type_combined() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-name", "*.rs", "-type", "f"]);
@@ -743,7 +674,7 @@ mod tests {
         assert!(lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_or() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-name", "*.rs", "-o", "-name", "*.txt"]);
@@ -755,7 +686,7 @@ mod tests {
         assert!(lines.contains(&"/project/docs/readme.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_not() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-type", "f", "!", "-name", "*.rs"]);
@@ -768,10 +699,12 @@ mod tests {
         assert!(!lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_print0() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/a.txt", b"a").await.unwrap();
         fs.write_file("/test/b.txt", b"b").await.unwrap();
         let ctx = make_ctx(fs, &["/test", "-name", "*.txt", "-print0"]);
@@ -780,13 +713,19 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         // Output should be null-separated
         assert!(result.stdout.contains('\0'));
-        let parts: Vec<&str> = result.stdout.split('\0').filter(|s| !s.is_empty()).collect();
+        let parts: Vec<&str> = result
+            .stdout
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .collect();
         assert_eq!(parts.len(), 2);
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_printf() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/hello.txt", b"hello").await.unwrap();
         let ctx = make_ctx(fs, &["/test", "-name", "hello.txt", "-printf", "%f %s\\n"]);
         let cmd = FindCommand;
@@ -795,17 +734,26 @@ mod tests {
         assert_eq!(result.stdout, "hello.txt 5\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_prune() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/test/skip", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/test/skip", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/skip/hidden.txt", b"x").await.unwrap();
-        fs.mkdir("/test/keep", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test/keep", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/keep/visible.txt", b"y").await.unwrap();
-        let ctx = make_ctx(fs, &[
-            "/test", "-name", "skip", "-prune", "-o", "-type", "f", "-print",
-        ]);
+        let ctx = make_ctx(
+            fs,
+            &[
+                "/test", "-name", "skip", "-prune", "-o", "-type", "f", "-print",
+            ],
+        );
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -814,10 +762,12 @@ mod tests {
         assert!(!lines.contains(&"/test/skip/hidden.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_delete() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/a.txt", b"a").await.unwrap();
         fs.write_file("/test/b.rs", b"b").await.unwrap();
         let ctx = make_ctx(fs.clone(), &["/test", "-name", "*.txt", "-delete"]);
@@ -830,10 +780,12 @@ mod tests {
         assert!(fs.exists("/test/b.rs").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_newer() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/old.txt", b"old").await.unwrap();
         // Set old.txt mtime to 10 days ago
         let old_time = SystemTime::now() - Duration::from_secs(10 * 86400);
@@ -853,10 +805,12 @@ mod tests {
         assert!(lines.contains(&"/test/new.txt"));
         assert!(!lines.contains(&"/test/old.txt"));
     }
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_regex() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/test", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/test", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/test/file1.txt", b"a").await.unwrap();
         fs.write_file("/test/file2.rs", b"b").await.unwrap();
         fs.write_file("/test/data.json", b"c").await.unwrap();
@@ -868,7 +822,7 @@ mod tests {
         assert_eq!(lines, vec!["/test/file1.txt"]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_with_path_pattern() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-path", "*/src/*"]);
@@ -881,12 +835,16 @@ mod tests {
         assert!(!lines.contains(&"/project/docs/readme.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_multiple_starting_paths() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/a", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/a/file1.txt", b"1").await.unwrap();
-        fs.mkdir("/b", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/b", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/b/file2.txt", b"2").await.unwrap();
         let ctx = make_ctx(fs, &["/a", "/b", "-type", "f"]);
         let cmd = FindCommand;
@@ -897,11 +855,13 @@ mod tests {
         assert!(lines.contains(&"/b/file2.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_default_path() {
         // When no path given, default to "."
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/cwd", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/cwd", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/cwd/test.txt", b"x").await.unwrap();
         let ctx = CommandContext {
             args: vec!["-name".to_string(), "*.txt".to_string()],
@@ -918,7 +878,7 @@ mod tests {
         assert!(result.stdout.contains("test.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_nonexistent_path() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = make_ctx(fs, &["/nonexistent"]);
@@ -928,11 +888,15 @@ mod tests {
         assert!(result.stderr.contains("No such file or directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_no_args_prints_everything() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/cwd", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/cwd/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/cwd", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/cwd/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/cwd/sub/file.txt", b"x").await.unwrap();
         let ctx = CommandContext {
             args: vec![],
@@ -951,10 +915,12 @@ mod tests {
         assert!(result.stdout.contains("file.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_iname_case_insensitive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/README.md", b"").await.unwrap();
         fs.write_file("/dir/readme.txt", b"").await.unwrap();
         fs.write_file("/dir/Readme.rst", b"").await.unwrap();
@@ -970,10 +936,12 @@ mod tests {
         assert!(lines.contains(&"/dir/readme.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_iname_uppercase_pattern() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/config.json", b"").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-iname", "CONFIG.JSON"]);
         let cmd = FindCommand;
@@ -982,11 +950,15 @@ mod tests {
         assert_eq!(result.stdout, "/dir/config.json\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_ipath_case_insensitive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/Project/SRC", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/Project/src", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/Project/SRC", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/Project/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/Project/SRC/file.ts", b"").await.unwrap();
         fs.write_file("/Project/src/other.ts", b"").await.unwrap();
         let ctx = make_ctx(fs, &["/Project", "-ipath", "*src*"]);
@@ -1000,10 +972,12 @@ mod tests {
         assert!(lines.contains(&"/Project/src/other.ts"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_iregex_case_insensitive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/FILE.TXT", b"").await.unwrap();
         fs.write_file("/dir/file.txt", b"").await.unwrap();
         fs.write_file("/dir/other.js", b"").await.unwrap();
@@ -1017,10 +991,12 @@ mod tests {
         assert!(lines.contains(&"/dir/file.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_regex_complex_pattern() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/test1.ts", b"").await.unwrap();
         fs.write_file("/dir/test2.ts", b"").await.unwrap();
         fs.write_file("/dir/test10.ts", b"").await.unwrap();
@@ -1035,7 +1011,7 @@ mod tests {
         assert!(lines.contains(&"/dir/test2.ts"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_maxdepth_0() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-maxdepth", "0"]);
@@ -1045,7 +1021,7 @@ mod tests {
         assert_eq!(result.stdout, "/project\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_maxdepth_2_with_name() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-maxdepth", "2", "-name", "*.rs"]);
@@ -1059,7 +1035,7 @@ mod tests {
         assert!(lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mindepth_1_type_d() {
         let fs = setup_basic_fs().await;
         let ctx = make_ctx(fs, &["/project", "-mindepth", "1", "-type", "d"]);
@@ -1072,10 +1048,13 @@ mod tests {
         assert!(lines.contains(&"/project/docs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mindepth_maxdepth_combined() {
         let fs = setup_basic_fs().await;
-        let ctx = make_ctx(fs, &["/project", "-mindepth", "1", "-maxdepth", "1", "-type", "f"]);
+        let ctx = make_ctx(
+            fs,
+            &["/project", "-mindepth", "1", "-maxdepth", "1", "-type", "f"],
+        );
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -1084,10 +1063,12 @@ mod tests {
         assert!(!lines.contains(&"/project/src/main.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_bytes_exact() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/exact.txt", b"12345").await.unwrap();
         fs.write_file("/dir/other.txt", b"1234").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "5c"]);
@@ -1097,11 +1078,15 @@ mod tests {
         assert_eq!(result.stdout, "/dir/exact.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_less_than_bytes() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/large.txt", &vec![b'x'; 1000]).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/large.txt", &vec![b'x'; 1000])
+            .await
+            .unwrap();
         fs.write_file("/dir/small.txt", b"tiny").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "-100c"]);
         let cmd = FindCommand;
@@ -1110,11 +1095,15 @@ mod tests {
         assert_eq!(result.stdout, "/dir/small.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_greater_than_bytes() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/large.txt", &vec![b'x'; 1000]).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/large.txt", &vec![b'x'; 1000])
+            .await
+            .unwrap();
         fs.write_file("/dir/small.txt", b"tiny").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "+100c"]);
         let cmd = FindCommand;
@@ -1123,10 +1112,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/large.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_megabytes() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/small.txt", b"tiny").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "-1M"]);
         let cmd = FindCommand;
@@ -1135,10 +1126,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/small.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_0_today() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/today.txt", b"today").await.unwrap();
         fs.write_file("/dir/old.txt", b"old").await.unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(3 * 86400);
@@ -1150,10 +1143,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/today.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_plus_n() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/recent.txt", b"recent").await.unwrap();
         fs.write_file("/dir/old.txt", b"old").await.unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(10 * 86400);
@@ -1165,10 +1160,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/old.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_minus_n() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/recent.txt", b"recent").await.unwrap();
         fs.write_file("/dir/old.txt", b"old").await.unwrap();
         let old_time = SystemTime::now() - Duration::from_secs(10 * 86400);
@@ -1180,10 +1177,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/recent.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_newer_nonexistent_ref() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-newer", "/nonexistent.txt"]);
         let cmd = FindCommand;
@@ -1192,10 +1191,12 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_path_with_extension() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/data/pulls", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/data/pulls", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/data/pulls/1.json", b"{}").await.unwrap();
         fs.write_file("/data/pulls/2.txt", b"").await.unwrap();
         fs.write_file("/data/pulls/readme.md", b"").await.unwrap();
@@ -1206,12 +1207,18 @@ mod tests {
         assert_eq!(result.stdout, "/data/pulls/1.json\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_path_multiple_segments() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/a/src/lib", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/a/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/a/lib", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/a/src/lib", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/a/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/a/lib", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/a/src/lib/util.ts", b"").await.unwrap();
         fs.write_file("/a/src/util.ts", b"").await.unwrap();
         fs.write_file("/a/lib/util.ts", b"").await.unwrap();
@@ -1222,11 +1229,15 @@ mod tests {
         assert_eq!(result.stdout, "/a/src/lib/util.ts\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_path_with_dot_prefix() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/project/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/project/lib", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/project/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/project/lib", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/project/src/index.ts", b"").await.unwrap();
         fs.write_file("/project/src/utils.ts", b"").await.unwrap();
         fs.write_file("/project/lib/index.ts", b"").await.unwrap();
@@ -1251,35 +1262,65 @@ mod tests {
         assert!(lines.contains(&"./src/utils.ts"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_prune_multiple_dirs() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/node_modules/pkg", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/.git/objects", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/node_modules/pkg/index.js", b"").await.unwrap();
+        fs.mkdir("/dir/node_modules/pkg", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/.git/objects", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/node_modules/pkg/index.js", b"")
+            .await
+            .unwrap();
         fs.write_file("/dir/.git/objects/abc", b"").await.unwrap();
         fs.write_file("/dir/src/main.ts", b"").await.unwrap();
-        let ctx = make_ctx(fs, &[
-            "/dir", "(", "-name", "node_modules", "-o", "-name", ".git", ")", "-prune", "-o", "-type", "f", "-print",
-        ]);
+        let ctx = make_ctx(
+            fs,
+            &[
+                "/dir",
+                "(",
+                "-name",
+                "node_modules",
+                "-o",
+                "-name",
+                ".git",
+                ")",
+                "-prune",
+                "-o",
+                "-type",
+                "f",
+                "-print",
+            ],
+        );
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "/dir/src/main.ts\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_prune_with_type_d() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/project/dist", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/project/src", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/project/dist", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/project/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/project/dist/bundle.js", b"").await.unwrap();
         fs.write_file("/project/src/index.ts", b"").await.unwrap();
         fs.write_file("/project/README.md", b"").await.unwrap();
-        let ctx = make_ctx(fs, &[
-            "/project", "-type", "d", "-name", "dist", "-prune", "-o", "-type", "f", "-print",
-        ]);
+        let ctx = make_ctx(
+            fs,
+            &[
+                "/project", "-type", "d", "-name", "dist", "-prune", "-o", "-type", "f", "-print",
+            ],
+        );
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -1289,11 +1330,15 @@ mod tests {
         assert!(!lines.contains(&"/project/dist/bundle.js"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_prune_without_print() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/skip", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/keep", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/skip", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/keep", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/skip/file.txt", b"").await.unwrap();
         fs.write_file("/dir/keep/file.txt", b"").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-name", "skip", "-prune"]);
@@ -1303,11 +1348,15 @@ mod tests {
         assert_eq!(result.stdout, "/dir/skip\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_special_chars_spaces() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/file with spaces.txt", b"content").await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/file with spaces.txt", b"content")
+            .await
+            .unwrap();
         fs.write_file("/dir/normal.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-name", "file with spaces.txt"]);
         let cmd = FindCommand;
@@ -1316,12 +1365,18 @@ mod tests {
         assert_eq!(result.stdout, "/dir/file with spaces.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_special_chars_wildcard() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/file with spaces.txt", b"content").await.unwrap();
-        fs.write_file("/dir/another file.txt", b"content").await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/file with spaces.txt", b"content")
+            .await
+            .unwrap();
+        fs.write_file("/dir/another file.txt", b"content")
+            .await
+            .unwrap();
         fs.write_file("/dir/normal.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-name", "* *"]);
         let cmd = FindCommand;
@@ -1333,12 +1388,16 @@ mod tests {
         assert!(lines.contains(&"/dir/file with spaces.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_wildcard_question_mark() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/project", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/project", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/project/package.json", b"{}").await.unwrap();
-        fs.write_file("/project/tsconfig.json", b"{}").await.unwrap();
+        fs.write_file("/project/tsconfig.json", b"{}")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/project", "-name", "???*.json"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1349,11 +1408,15 @@ mod tests {
         assert!(lines.contains(&"/project/tsconfig.json"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_trailing_slash_in_path() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/project/src", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/project/src/index.ts", b"content").await.unwrap();
+        fs.mkdir("/project/src", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/project/src/index.ts", b"content")
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/project/", "-name", "*.ts"]
                 .iter()
@@ -1372,11 +1435,15 @@ mod tests {
         assert_eq!(result.stdout, "/project/src/index.ts\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_depth_first_multiple_branches() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/a", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/b", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/a", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/b", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/a/1.txt", b"1").await.unwrap();
         fs.write_file("/dir/b/2.txt", b"2").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-depth", "-type", "f"]);
@@ -1389,10 +1456,12 @@ mod tests {
         assert!(lines.contains(&"/dir/b/2.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_or_operator_simple() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         fs.write_file("/dir/file.rs", b"code").await.unwrap();
         fs.write_file("/dir/file.md", b"doc").await.unwrap();
@@ -1406,10 +1475,12 @@ mod tests {
         assert!(lines.contains(&"/dir/file.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_or_operator_with_type() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-o", "-type", "d"]);
         let cmd = FindCommand;
@@ -1421,10 +1492,12 @@ mod tests {
         assert!(lines.contains(&"/dir/subdir"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_and_operator_explicit() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/test.txt", b"content").await.unwrap();
         fs.write_file("/dir/test.rs", b"code").await.unwrap();
         fs.write_file("/dir/other.txt", b"other").await.unwrap();
@@ -1435,10 +1508,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/test.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_not_operator_with_name() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         fs.write_file("/dir/file.rs", b"code").await.unwrap();
         fs.write_file("/dir/file.md", b"doc").await.unwrap();
@@ -1452,10 +1527,12 @@ mod tests {
         assert!(lines.contains(&"/dir/file.md"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_negation_with_exclamation() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         fs.write_file("/dir/file.rs", b"code").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "!", "-name", "*.txt"]);
@@ -1468,12 +1545,16 @@ mod tests {
         assert!(!lines.contains(&"/dir/file.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_empty_files() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/empty.txt", b"").await.unwrap();
-        fs.write_file("/dir/nonempty.txt", b"content").await.unwrap();
+        fs.write_file("/dir/nonempty.txt", b"content")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-empty"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1481,12 +1562,18 @@ mod tests {
         assert_eq!(result.stdout, "/dir/empty.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_empty_directories() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/empty", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/nonempty", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/nonempty/file.txt", b"content").await.unwrap();
+        fs.mkdir("/dir/empty", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/nonempty", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/nonempty/file.txt", b"content")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "d", "-empty"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1494,11 +1581,15 @@ mod tests {
         assert_eq!(result.stdout, "/dir/empty\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_multiple_paths() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir1", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir2", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir1", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir2", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir1/file1.txt", b"1").await.unwrap();
         fs.write_file("/dir2/file2.txt", b"2").await.unwrap();
         let ctx = make_ctx(fs, &["/dir1", "/dir2", "-name", "*.txt"]);
@@ -1511,10 +1602,12 @@ mod tests {
         assert!(lines.contains(&"/dir2/file2.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_name_with_brackets() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file1.txt", b"1").await.unwrap();
         fs.write_file("/dir/file2.txt", b"2").await.unwrap();
         fs.write_file("/dir/file3.txt", b"3").await.unwrap();
@@ -1529,10 +1622,12 @@ mod tests {
         assert!(lines.contains(&"/dir/file2.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_name_with_negated_brackets() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file1.txt", b"1").await.unwrap();
         fs.write_file("/dir/file2.txt", b"2").await.unwrap();
         fs.write_file("/dir/file3.txt", b"3").await.unwrap();
@@ -1543,12 +1638,16 @@ mod tests {
         assert_eq!(result.stdout, "/dir/file3.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_maxdepth_0_only_root() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
-        fs.write_file("/dir/sub/nested.txt", b"nested").await.unwrap();
+        fs.write_file("/dir/sub/nested.txt", b"nested")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-maxdepth", "0"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1556,12 +1655,16 @@ mod tests {
         assert_eq!(result.stdout, "/dir\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_maxdepth_1() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
-        fs.write_file("/dir/sub/nested.txt", b"nested").await.unwrap();
+        fs.write_file("/dir/sub/nested.txt", b"nested")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-maxdepth", "1", "-type", "f"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1569,12 +1672,16 @@ mod tests {
         assert_eq!(result.stdout, "/dir/file.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mindepth_1() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
-        fs.write_file("/dir/sub/nested.txt", b"nested").await.unwrap();
+        fs.write_file("/dir/sub/nested.txt", b"nested")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-mindepth", "1"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1586,12 +1693,16 @@ mod tests {
         assert!(lines.contains(&"/dir/sub/nested.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mindepth_2() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
-        fs.write_file("/dir/sub/nested.txt", b"nested").await.unwrap();
+        fs.write_file("/dir/sub/nested.txt", b"nested")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-mindepth", "2", "-type", "f"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1599,12 +1710,16 @@ mod tests {
         assert_eq!(result.stdout, "/dir/sub/nested.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_zero() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/empty.txt", b"").await.unwrap();
-        fs.write_file("/dir/nonempty.txt", b"content").await.unwrap();
+        fs.write_file("/dir/nonempty.txt", b"content")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "0"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1612,12 +1727,16 @@ mod tests {
         assert_eq!(result.stdout, "/dir/empty.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_kilobytes() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         let large_content = vec![b'x'; 2048];
-        fs.write_file("/dir/large.txt", &large_content).await.unwrap();
+        fs.write_file("/dir/large.txt", &large_content)
+            .await
+            .unwrap();
         fs.write_file("/dir/small.txt", b"small").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-size", "+1k"]);
         let cmd = FindCommand;
@@ -1626,10 +1745,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/large.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_zero() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/recent.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-mtime", "0", "-type", "f"]);
         let cmd = FindCommand;
@@ -1638,10 +1759,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/recent.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_negative() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-mtime", "-1", "-type", "f"]);
         let cmd = FindCommand;
@@ -1650,10 +1773,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/file.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_mtime_positive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-mtime", "+1", "-type", "f"]);
         let cmd = FindCommand;
@@ -1662,10 +1787,12 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_regex_anchored() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/test.txt", b"content").await.unwrap();
         fs.write_file("/dir/other.txt", b"other").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-regex", ".*/test\\.txt"]);
@@ -1675,10 +1802,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/test.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_regex_with_alternation() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         fs.write_file("/dir/file.rs", b"code").await.unwrap();
         fs.write_file("/dir/file.md", b"doc").await.unwrap();
@@ -1692,10 +1821,12 @@ mod tests {
         assert!(lines.contains(&"/dir/file.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_iregex_readme_files() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/README.md", b"doc").await.unwrap();
         fs.write_file("/dir/readme.txt", b"doc").await.unwrap();
         fs.write_file("/dir/other.md", b"other").await.unwrap();
@@ -1709,10 +1840,12 @@ mod tests {
         assert!(lines.contains(&"/dir/readme.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_complex_or_and_combination() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/test.txt", b"content").await.unwrap();
         fs.write_file("/dir/test.rs", b"code").await.unwrap();
         fs.write_file("/dir/other.txt", b"other").await.unwrap();
@@ -1728,10 +1861,12 @@ mod tests {
         assert!(lines.contains(&"/dir/other.rs"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_name_case_sensitive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/File.txt", b"content").await.unwrap();
         fs.write_file("/dir/file.txt", b"content").await.unwrap();
         let ctx = make_ctx(fs, &["/dir", "-name", "file.txt"]);
@@ -1741,13 +1876,21 @@ mod tests {
         assert_eq!(result.stdout, "/dir/file.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_path_case_sensitive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/Sub", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true }).await.unwrap();
-        fs.write_file("/dir/Sub/file.txt", b"content").await.unwrap();
-        fs.write_file("/dir/sub/file.txt", b"content").await.unwrap();
+        fs.mkdir("/dir/Sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/dir/sub", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.write_file("/dir/Sub/file.txt", b"content")
+            .await
+            .unwrap();
+        fs.write_file("/dir/sub/file.txt", b"content")
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-path", "*/sub/*"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1755,15 +1898,20 @@ mod tests {
         assert_eq!(result.stdout, "/dir/sub/file.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_combined_depth_constraints() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/a/b/c", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/a/b/c", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/1.txt", b"1").await.unwrap();
         fs.write_file("/dir/a/2.txt", b"2").await.unwrap();
         fs.write_file("/dir/a/b/3.txt", b"3").await.unwrap();
         fs.write_file("/dir/a/b/c/4.txt", b"4").await.unwrap();
-        let ctx = make_ctx(fs, &["/dir", "-mindepth", "2", "-maxdepth", "3", "-type", "f"]);
+        let ctx = make_ctx(
+            fs,
+            &["/dir", "-mindepth", "2", "-maxdepth", "3", "-type", "f"],
+        );
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -1773,13 +1921,17 @@ mod tests {
         assert!(lines.contains(&"/dir/a/b/3.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_size_with_type_filter() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir/subdir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/small.txt", b"x").await.unwrap();
         let large_content = vec![b'y'; 100];
-        fs.write_file("/dir/large.txt", &large_content).await.unwrap();
+        fs.write_file("/dir/large.txt", &large_content)
+            .await
+            .unwrap();
         let ctx = make_ctx(fs, &["/dir", "-type", "f", "-size", "+10c"]);
         let cmd = FindCommand;
         let result = cmd.execute(ctx).await;
@@ -1787,10 +1939,12 @@ mod tests {
         assert_eq!(result.stdout, "/dir/large.txt\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_find_regex_digit_pattern() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/dir", &MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/dir", &MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/dir/file1.txt", b"1").await.unwrap();
         fs.write_file("/dir/file2.txt", b"2").await.unwrap();
         fs.write_file("/dir/fileA.txt", b"a").await.unwrap();

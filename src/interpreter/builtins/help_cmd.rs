@@ -7,6 +7,7 @@
 //! for each builtin command matching PATTERN to a short usage synopsis.
 
 use super::break_cmd::BuiltinResult;
+use crate::shell::pattern_utils;
 
 /// Builtin help information: (synopsis, description)
 struct BuiltinHelp {
@@ -383,7 +384,10 @@ pub fn handle_help(args: &[String]) -> BuiltinResult {
             if short_form {
                 stdout.push_str(&format!("{}: {}\n", help.name, help.synopsis));
             } else {
-                stdout.push_str(&format!("{}: {}\n{}\n", help.name, help.synopsis, help.description));
+                stdout.push_str(&format!(
+                    "{}: {}\n{}\n",
+                    help.name, help.synopsis, help.description
+                ));
             }
         }
     }
@@ -399,41 +403,8 @@ pub fn handle_help(args: &[String]) -> BuiltinResult {
 fn find_matching_builtins(pattern: &str) -> Vec<&'static BuiltinHelp> {
     BUILTIN_HELP
         .iter()
-        .filter(|h| glob_match(pattern, h.name))
+        .filter(|h| pattern_utils::matches_shell_glob(pattern, h.name))
         .collect()
-}
-
-/// Simple glob matching (supports * and ?)
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    let text_chars: Vec<char> = text.chars().collect();
-    glob_match_impl(&pattern_chars, &text_chars)
-}
-
-fn glob_match_impl(pattern: &[char], text: &[char]) -> bool {
-    if pattern.is_empty() {
-        return text.is_empty();
-    }
-
-    match pattern[0] {
-        '*' => {
-            // Try matching zero or more characters
-            for i in 0..=text.len() {
-                if glob_match_impl(&pattern[1..], &text[i..]) {
-                    return true;
-                }
-            }
-            false
-        }
-        '?' => {
-            // Match exactly one character
-            !text.is_empty() && glob_match_impl(&pattern[1..], &text[1..])
-        }
-        c => {
-            // Match literal character
-            !text.is_empty() && text[0] == c && glob_match_impl(&pattern[1..], &text[1..])
-        }
-    }
 }
 
 /// List all builtins in a formatted table
@@ -441,7 +412,9 @@ fn list_all_builtins() -> BuiltinResult {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("just-bash shell builtins".to_string());
-    lines.push("These shell commands are defined internally. Type `help' to see this list.".to_string());
+    lines.push(
+        "These shell commands are defined internally. Type `help' to see this list.".to_string(),
+    );
     lines.push("Type `help name' to find out more about the function `name'.".to_string());
     lines.push(String::new());
 
@@ -471,6 +444,7 @@ fn list_all_builtins() -> BuiltinResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::find::matcher::glob_match;
 
     #[test]
     fn test_help_no_args() {

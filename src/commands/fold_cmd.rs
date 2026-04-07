@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct FoldCommand;
 
@@ -44,7 +46,8 @@ fn fold_line(line: &str, width: usize, break_at_spaces: bool, count_bytes: bool)
                 let idx = last_space_index.unwrap();
                 result.push(current_line[..=idx].to_string());
                 current_line = format!("{}{}", &current_line[idx + 1..], c);
-                current_column = current_column - last_space_column - 1 + char_width.max(0) as usize;
+                current_column =
+                    current_column - last_space_column - 1 + char_width.max(0) as usize;
                 last_space_index = None;
                 last_space_column = 0;
             } else {
@@ -72,7 +75,12 @@ fn fold_line(line: &str, width: usize, break_at_spaces: bool, count_bytes: bool)
     result.join("\n")
 }
 
-fn process_content(content: &str, width: usize, break_at_spaces: bool, count_bytes: bool) -> String {
+fn process_content(
+    content: &str,
+    width: usize,
+    break_at_spaces: bool,
+    count_bytes: bool,
+) -> String {
     if content.is_empty() {
         return String::new();
     }
@@ -189,7 +197,10 @@ impl Command for FoldCommand {
                             break;
                         }
                         _ => {
-                            return CommandResult::error(format!("fold: invalid option -- '{}'\n", c));
+                            return CommandResult::error(invalid_option(
+                                "fold",
+                                c.encode_utf8(&mut [0u8; 4]),
+                            ));
                         }
                     }
                 }
@@ -209,12 +220,17 @@ impl Command for FoldCommand {
                 let file_path = ctx.fs.resolve_path(&ctx.cwd, file);
                 match ctx.fs.read_file(&file_path).await {
                     Ok(content) => {
-                        output.push_str(&process_content(&content, width, break_at_spaces, count_bytes));
+                        output.push_str(&process_content(
+                            &content,
+                            width,
+                            break_at_spaces,
+                            count_bytes,
+                        ));
                     }
                     Err(_) => {
                         return CommandResult::with_exit_code(
                             output,
-                            format!("fold: {}: No such file or directory\n", file),
+                            no_such_file("fold", file),
                             1,
                         );
                     }
@@ -229,11 +245,11 @@ impl Command for FoldCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_fold_default_width() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -251,7 +267,7 @@ mod tests {
         assert!(result.stdout.contains('\n'));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_fold_word_wrap() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

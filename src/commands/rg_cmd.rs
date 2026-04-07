@@ -1,8 +1,11 @@
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::vfs_walk::read_dir_sorted;
+use crate::commands::{Command, CommandContext, CommandResult};
+use crate::fs::{child_path, FileSystem};
+use crate::shell::pattern_utils;
 use async_trait::async_trait;
 use regex_lite::Regex;
 use std::collections::HashSet;
-use crate::commands::{Command, CommandContext, CommandResult};
-use crate::fs::FileSystem;
 
 pub struct RgCommand;
 
@@ -116,23 +119,19 @@ fn matches_glob(path: &str, globs: &[String]) -> bool {
         return true;
     }
     let filename = path.rsplit('/').next().unwrap_or(path);
-    for glob in globs {
-        let pattern = glob.replace("*", ".*").replace("?", ".");
-        if let Ok(re) = Regex::new(&format!("^{}$", pattern)) {
-            if re.is_match(filename) {
-                return true;
-            }
-        }
-    }
-    false
+    globs
+        .iter()
+        .any(|g| pattern_utils::matches_shell_glob(g, filename))
 }
 
 #[async_trait]
 impl Command for RgCommand {
-    fn name(&self) -> &'static str { "rg" }
+    fn name(&self) -> &'static str {
+        "rg"
+    }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "rg - recursively search for a pattern\n\nUsage: rg [OPTIONS] PATTERN [PATH ...]\n\nOptions:\n  -i, --ignore-case       case-insensitive search\n  -F, --fixed-strings     treat pattern as literal\n  -w, --word-regexp       match whole words\n  -v, --invert-match      select non-matching lines\n  -c, --count             print match count per file\n  -l, --files-with-matches  print only filenames\n  -o, --only-matching     print only matching parts\n  -n, --line-number       print line numbers (default)\n  -N, --no-line-number    suppress line numbers\n  --hidden                search hidden files\n  -g, --glob GLOB         include files matching GLOB\n  -t, --type TYPE         search only TYPE files\n  -A NUM                  print NUM lines after match\n  -B NUM                  print NUM lines before match\n  -C NUM                  print NUM context lines\n".to_string()
             );
@@ -284,7 +283,11 @@ impl Command for RgCommand {
 
             for (line_num, line) in lines.iter().enumerate() {
                 let is_match = regex.is_match(line);
-                let should_output = if opts.invert_match { !is_match } else { is_match };
+                let should_output = if opts.invert_match {
+                    !is_match
+                } else {
+                    is_match
+                };
 
                 if should_output {
                     if let Some(max) = opts.max_count {
@@ -378,16 +381,10 @@ async fn collect_files(
             return;
         }
 
-        if let Ok(entries) = fs.readdir(path).await {
-            let mut sorted_entries: Vec<_> = entries.into_iter().collect();
-            sorted_entries.sort();
+        if let Ok(sorted_entries) = read_dir_sorted(fs.as_ref(), path).await {
             for entry in sorted_entries {
-                let child_path = if path.ends_with('/') {
-                    format!("{}{}", path, entry)
-                } else {
-                    format!("{}/{}", path, entry)
-                };
-                Box::pin(collect_files(fs, &child_path, opts, depth + 1, files)).await;
+                let joined = child_path(path, &entry);
+                Box::pin(collect_files(fs, &joined, opts, depth + 1, files)).await;
             }
         }
     }
@@ -396,9 +393,9 @@ async fn collect_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -412,7 +409,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_help() {
         let ctx = create_ctx(vec!["--help"]);
         let result = RgCommand.execute(ctx).await;
@@ -420,18 +417,20 @@ mod tests {
         assert!(result.stdout.contains("PATTERN"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_no_pattern() {
         let ctx = create_ctx(vec![]);
         let result = RgCommand.execute(ctx).await;
         assert!(result.stderr.contains("no pattern"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_search_file() {
         let mut ctx = create_ctx(vec!["hello", "/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", b"hello world\nfoo bar\nhello again").await.unwrap();
+        fs.write_file("/test.txt", b"hello world\nfoo bar\nhello again")
+            .await
+            .unwrap();
         ctx.fs = fs;
         let result = RgCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -439,7 +438,7 @@ mod tests {
         assert!(result.stdout.contains("hello again"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ignore_case() {
         let mut ctx = create_ctx(vec!["-i", "HELLO", "/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -450,17 +449,19 @@ mod tests {
         assert!(result.stdout.contains("hello"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_count() {
         let mut ctx = create_ctx(vec!["-c", "hello", "/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", b"hello\nhello\nworld").await.unwrap();
+        fs.write_file("/test.txt", b"hello\nhello\nworld")
+            .await
+            .unwrap();
         ctx.fs = fs;
         let result = RgCommand.execute(ctx).await;
         assert!(result.stdout.contains("2"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_files_with_matches() {
         let mut ctx = create_ctx(vec!["-l", "hello", "/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
@@ -470,24 +471,26 @@ mod tests {
         assert!(result.stdout.contains("/test.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_invert_match() {
         let mut ctx = create_ctx(vec!["-v", "hello", "/test.txt"]);
         let fs = Arc::new(InMemoryFs::new());
-        fs.write_file("/test.txt", b"hello\nworld\nhello").await.unwrap();
+        fs.write_file("/test.txt", b"hello\nworld\nhello")
+            .await
+            .unwrap();
         ctx.fs = fs;
         let result = RgCommand.execute(ctx).await;
         assert!(result.stdout.contains("world"));
         assert!(!result.stdout.contains("hello"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_type_filter() {
         assert!(matches_type("/foo.rs", &vec!["rs".to_string()], &vec![]));
         assert!(!matches_type("/foo.py", &vec!["rs".to_string()], &vec![]));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_glob_filter() {
         assert!(matches_glob("/foo/bar.txt", &vec!["*.txt".to_string()]));
         assert!(!matches_glob("/foo/bar.rs", &vec!["*.txt".to_string()]));

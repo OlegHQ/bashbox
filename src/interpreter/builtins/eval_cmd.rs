@@ -41,7 +41,10 @@ pub fn parse_eval_args(args: &[String]) -> Result<Option<EvalCommand>, BuiltinRe
             // Invalid option like -z, -x, etc.
             return Err((
                 String::new(),
-                format!("bash: eval: {}: invalid option\neval: usage: eval [arg ...]\n", first),
+                format!(
+                    "bash: eval: {}: invalid option\neval: usage: eval [arg ...]\n",
+                    first
+                ),
                 2,
             ));
         }
@@ -81,12 +84,11 @@ pub fn handle_eval_parse(args: &[String]) -> Result<Option<EvalCommand>, Builtin
 ///
 /// Saves the current groupStdin and sets up the effective stdin.
 /// Returns the saved groupStdin value for later restoration.
-pub fn prepare_eval_stdin(
-    state: &mut InterpreterState,
-    stdin: Option<&str>,
-) -> Option<String> {
+pub fn prepare_eval_stdin(state: &mut InterpreterState, stdin: Option<&str>) -> Option<String> {
     let saved_group_stdin = state.group_stdin.clone();
-    let effective_stdin = stdin.map(|s| s.to_string()).or_else(|| state.group_stdin.clone());
+    let effective_stdin = stdin
+        .map(|s| s.to_string())
+        .or_else(|| state.group_stdin.clone());
     if effective_stdin.is_some() {
         state.group_stdin = effective_stdin;
     }

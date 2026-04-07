@@ -3,9 +3,12 @@
 //! Bridges the async `fs::FileSystem` trait to the sync `interpreter::FileSystem` trait.
 //! Uses `tokio::task::block_in_place` + `block_on` to execute async operations synchronously.
 
-use std::sync::Arc;
 use crate::fs::FileSystem as AsyncFileSystem;
-use crate::interpreter::interpreter::{FileSystem as SyncFileSystem, FileStat};
+use crate::interpreter::interpreter::{FileStat, FileSystem as SyncFileSystem};
+use crate::interpreter::types::ShoptOptions;
+use crate::shell::glob_expander::{GlobExpander, GlobOptions};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Adapter that wraps an async FileSystem and provides a sync interface.
 ///
@@ -72,7 +75,8 @@ impl SyncFileSystem for SyncFsAdapter {
     }
 
     fn stat(&self, path: &str) -> Result<FileStat, std::io::Error> {
-        let s = self.block_on(self.inner.stat(path))
+        let s = self
+            .block_on(self.inner.stat(path))
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         Ok(FileStat {
             is_file: s.is_file,
@@ -80,10 +84,13 @@ impl SyncFileSystem for SyncFsAdapter {
             is_symlink: s.is_symlink,
             size: s.size,
             mode: s.mode,
-            uid: 0,  // Not tracked in our virtual FS
-            gid: 0,  // Not tracked in our virtual FS
-            mtime: s.mtime.duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default().as_secs(),
+            uid: 0, // Not tracked in our virtual FS
+            gid: 0, // Not tracked in our virtual FS
+            mtime: s
+                .mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         })
     }
 
@@ -92,38 +99,23 @@ impl SyncFileSystem for SyncFsAdapter {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 
-    fn glob(&self, pattern: &str, cwd: &str) -> Result<Vec<String>, std::io::Error> {
-        // Get all paths from the filesystem
-        let all_paths = self.inner.get_all_paths();
-
-        // Use the glob crate to match patterns
-        let glob_pattern = if pattern.starts_with('/') {
-            pattern.to_string()
-        } else {
-            // Relative pattern - prepend cwd
-            if cwd == "/" {
-                format!("/{}", pattern)
-            } else {
-                format!("{}/{}", cwd, pattern)
-            }
+    fn glob(
+        &self,
+        pattern: &str,
+        cwd: &str,
+        env: &HashMap<String, String>,
+        shopt: &ShoptOptions,
+    ) -> Result<Vec<String>, std::io::Error> {
+        let options = GlobOptions {
+            globstar: shopt.globstar,
+            nullglob: shopt.nullglob,
+            failglob: shopt.failglob,
+            dotglob: shopt.dotglob,
+            extglob: shopt.extglob,
+            globskipdots: shopt.globskipdots,
         };
-
-        // Compile the glob pattern
-        let matcher = match glob::Pattern::new(&glob_pattern) {
-            Ok(m) => m,
-            Err(e) => return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("Invalid glob pattern: {}", e),
-            )),
-        };
-
-        // Filter paths that match the pattern
-        let matches: Vec<String> = all_paths
-            .into_iter()
-            .filter(|p| matcher.matches(p))
-            .collect();
-
-        Ok(matches)
+        let expander = GlobExpander::new(self.inner.clone(), cwd.to_string(), Some(env), options);
+        Ok(self.block_on(expander.expand(pattern)))
     }
 }
 
@@ -135,6 +127,8 @@ impl SyncFileSystem for SyncFsAdapter {
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
+    use crate::interpreter::types::ShoptOptions;
+    use std::collections::HashMap;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_sync_fs_adapter_read_write() {
@@ -167,7 +161,9 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new());
         let handle = tokio::runtime::Handle::current();
 
-        fs.mkdir("/mydir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/mydir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/myfile.txt", b"data").await.unwrap();
 
         let adapter = SyncFsAdapter::new(fs, handle);
@@ -182,7 +178,9 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new());
         let handle = tokio::runtime::Handle::current();
 
-        fs.write_file("/stat_test.txt", b"hello world").await.unwrap();
+        fs.write_file("/stat_test.txt", b"hello world")
+            .await
+            .unwrap();
 
         let adapter = SyncFsAdapter::new(fs, handle);
         let stat = adapter.stat("/stat_test.txt").unwrap();
@@ -196,7 +194,9 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new());
         let handle = tokio::runtime::Handle::current();
 
-        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/testdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/testdir/a.txt", b"a").await.unwrap();
         fs.write_file("/testdir/b.txt", b"b").await.unwrap();
 
@@ -213,8 +213,14 @@ mod tests {
         let handle = tokio::runtime::Handle::current();
 
         let adapter = SyncFsAdapter::new(fs, handle);
-        assert_eq!(adapter.resolve_path("/home/user", "file.txt"), "/home/user/file.txt");
-        assert_eq!(adapter.resolve_path("/home/user", "/absolute/path"), "/absolute/path");
+        assert_eq!(
+            adapter.resolve_path("/home/user", "file.txt"),
+            "/home/user/file.txt"
+        );
+        assert_eq!(
+            adapter.resolve_path("/home/user", "/absolute/path"),
+            "/absolute/path"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -222,13 +228,22 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new());
         let handle = tokio::runtime::Handle::current();
 
-        fs.mkdir("/glob_test", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/glob_test", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/glob_test/a.txt", b"a").await.unwrap();
         fs.write_file("/glob_test/b.txt", b"b").await.unwrap();
         fs.write_file("/glob_test/c.md", b"c").await.unwrap();
 
         let adapter = SyncFsAdapter::new(fs, handle);
-        let matches = adapter.glob("/glob_test/*.txt", "/").unwrap();
+        let matches = adapter
+            .glob(
+                "/glob_test/*.txt",
+                "/",
+                &HashMap::new(),
+                &ShoptOptions::default(),
+            )
+            .unwrap();
         assert_eq!(matches.len(), 2);
         assert!(matches.contains(&"/glob_test/a.txt".to_string()));
         assert!(matches.contains(&"/glob_test/b.txt".to_string()));

@@ -1,7 +1,8 @@
 // src/commands/cp/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::CpOptions;
+use async_trait::async_trait;
 
 pub struct CpCommand;
 
@@ -12,7 +13,7 @@ impl Command for CpCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "Usage: cp [OPTION]... SOURCE... DEST\n\n\
                  Copy SOURCE to DEST, or multiple SOURCE(s) to DIRECTORY.\n\n\
@@ -20,7 +21,8 @@ impl Command for CpCommand {
                    -r, -R, --recursive  copy directories recursively\n\
                    -n, --no-clobber     do not overwrite an existing file\n\
                    -v, --verbose        explain what is being done\n\
-                       --help           display this help and exit\n".to_string()
+                       --help           display this help and exit\n"
+                    .to_string(),
             );
         }
 
@@ -56,10 +58,7 @@ impl Command for CpCommand {
 
         // 如果有多个源，目标必须是目录
         if sources.len() > 1 && !dest_is_dir {
-            return CommandResult::error(format!(
-                "cp: target '{}' is not a directory\n",
-                dest
-            ));
+            return CommandResult::error(format!("cp: target '{}' is not a directory\n", dest));
         }
 
         let mut stdout = String::new();
@@ -73,7 +72,10 @@ impl Command for CpCommand {
             let src_stat = match ctx.fs.stat(&src_path).await {
                 Ok(s) => s,
                 Err(_) => {
-                    stderr.push_str(&format!("cp: cannot stat '{}': No such file or directory\n", src));
+                    stderr.push_str(&format!(
+                        "cp: cannot stat '{}': No such file or directory\n",
+                        src
+                    ));
                     exit_code = 1;
                     continue;
                 }
@@ -81,7 +83,10 @@ impl Command for CpCommand {
 
             // 如果是目录但没有 -r
             if src_stat.is_directory && !recursive {
-                stderr.push_str(&format!("cp: -r not specified; omitting directory '{}'\n", src));
+                stderr.push_str(&format!(
+                    "cp: -r not specified; omitting directory '{}'\n",
+                    src
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -120,32 +125,13 @@ impl Command for CpCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{InMemoryFs, FileSystem};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_file() {
-        let ctx = make_ctx_with_files(
-            vec!["/src.txt", "/dest.txt"],
-            vec![("/src.txt", "content")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/src.txt", "/dest.txt"], vec![("/src.txt", "content")]).await;
         let fs = ctx.fs.clone();
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
@@ -154,11 +140,13 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_to_directory() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/src.txt", b"content").await.unwrap();
-        fs.mkdir("/destdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/destdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/src.txt".to_string(), "/destdir".to_string()],
             stdin: String::new(),
@@ -174,10 +162,12 @@ mod tests {
         assert!(fs.exists("/destdir/src.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_directory_without_r() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["/srcdir".to_string(), "/destdir".to_string()],
             stdin: String::new(),
@@ -193,12 +183,13 @@ mod tests {
         assert_eq!(result.exit_code, 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_no_clobber() {
         let ctx = make_ctx_with_files(
             vec!["-n", "/src.txt", "/dest.txt"],
             vec![("/src.txt", "new"), ("/dest.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
@@ -207,12 +198,10 @@ mod tests {
         assert_eq!(content, "old"); // 未被覆盖
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_preserve_original() {
-        let ctx = make_ctx_with_files(
-            vec!["/src.txt", "/dest.txt"],
-            vec![("/src.txt", "content")],
-        ).await;
+        let ctx =
+            make_ctx_with_files(vec!["/src.txt", "/dest.txt"], vec![("/src.txt", "content")]).await;
         let fs = ctx.fs.clone();
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
@@ -221,12 +210,13 @@ mod tests {
         assert_eq!(src_content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_overwrite_existing() {
         let ctx = make_ctx_with_files(
             vec!["/src.txt", "/dest.txt"],
             vec![("/src.txt", "new content"), ("/dest.txt", "old content")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
@@ -235,14 +225,20 @@ mod tests {
         assert_eq!(content, "new content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_multiple_files_to_directory() {
         let fs = Arc::new(InMemoryFs::new());
         fs.write_file("/a.txt", b"aaa").await.unwrap();
         fs.write_file("/b.txt", b"bbb").await.unwrap();
-        fs.mkdir("/dir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/dir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         let ctx = CommandContext {
-            args: vec!["/a.txt".to_string(), "/b.txt".to_string(), "/dir".to_string()],
+            args: vec![
+                "/a.txt".to_string(),
+                "/b.txt".to_string(),
+                "/dir".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -257,25 +253,32 @@ mod tests {
         assert_eq!(fs.read_file("/dir/b.txt").await.unwrap(), "bbb");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_multiple_files_to_non_directory() {
         let ctx = make_ctx_with_files(
             vec!["/a.txt", "/b.txt", "/nonexistent"],
             vec![("/a.txt", ""), ("/b.txt", "")],
-        ).await;
+        )
+        .await;
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("not a directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_directory_with_recursive() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/srcdir/file.txt", b"content").await.unwrap();
         let ctx = CommandContext {
-            args: vec!["-r".to_string(), "/srcdir".to_string(), "/dstdir".to_string()],
+            args: vec![
+                "-r".to_string(),
+                "/srcdir".to_string(),
+                "/dstdir".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -290,13 +293,19 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_directory_with_capital_r() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/srcdir/file.txt", b"content").await.unwrap();
         let ctx = CommandContext {
-            args: vec!["-R".to_string(), "/srcdir".to_string(), "/dstdir".to_string()],
+            args: vec![
+                "-R".to_string(),
+                "/srcdir".to_string(),
+                "/dstdir".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -310,12 +319,18 @@ mod tests {
         assert!(fs.exists("/dstdir/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_nested_directories() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/src", &crate::fs::MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/src/a", &crate::fs::MkdirOptions { recursive: true }).await.unwrap();
-        fs.mkdir("/src/a/b", &crate::fs::MkdirOptions { recursive: true }).await.unwrap();
+        fs.mkdir("/src", &crate::fs::MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/src/a", &crate::fs::MkdirOptions { recursive: true })
+            .await
+            .unwrap();
+        fs.mkdir("/src/a/b", &crate::fs::MkdirOptions { recursive: true })
+            .await
+            .unwrap();
         fs.write_file("/src/a/b/c.txt", b"deep").await.unwrap();
         fs.write_file("/src/root.txt", b"root").await.unwrap();
         let ctx = CommandContext {
@@ -334,13 +349,19 @@ mod tests {
         assert_eq!(fs.read_file("/dst/root.txt").await.unwrap(), "root");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_recursive_long_flag() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
+        fs.mkdir("/srcdir", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
         fs.write_file("/srcdir/file.txt", b"content").await.unwrap();
         let ctx = CommandContext {
-            args: vec!["--recursive".to_string(), "/srcdir".to_string(), "/dstdir".to_string()],
+            args: vec![
+                "--recursive".to_string(),
+                "/srcdir".to_string(),
+                "/dstdir".to_string(),
+            ],
             stdin: String::new(),
             cwd: "/".to_string(),
             env: HashMap::new(),
@@ -354,7 +375,7 @@ mod tests {
         assert!(fs.exists("/dstdir/file.txt").await);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_missing_source() {
         let ctx = make_ctx_with_files(vec!["/missing.txt", "/dst.txt"], vec![]).await;
         let cmd = CpCommand;
@@ -363,24 +384,27 @@ mod tests {
         assert!(result.stderr.contains("No such file or directory"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_missing_destination() {
-        let ctx = make_ctx_with_files(
-            vec!["/src.txt"],
-            vec![("/src.txt", "")],
-        ).await;
+        let ctx = make_ctx_with_files(vec!["/src.txt"], vec![("/src.txt", "")]).await;
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("missing destination"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_relative_paths() {
         let fs = Arc::new(InMemoryFs::new());
-        fs.mkdir("/home", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
-        fs.mkdir("/home/user", &crate::fs::MkdirOptions { recursive: false }).await.unwrap();
-        fs.write_file("/home/user/src.txt", b"content").await.unwrap();
+        fs.mkdir("/home", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.mkdir("/home/user", &crate::fs::MkdirOptions { recursive: false })
+            .await
+            .unwrap();
+        fs.write_file("/home/user/src.txt", b"content")
+            .await
+            .unwrap();
         let ctx = CommandContext {
             args: vec!["src.txt".to_string(), "dst.txt".to_string()],
             stdin: String::new(),
@@ -397,12 +421,13 @@ mod tests {
         assert_eq!(content, "content");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_verbose() {
         let ctx = make_ctx_with_files(
             vec!["-v", "/src.txt", "/dest.txt"],
             vec![("/src.txt", "content")],
-        ).await;
+        )
+        .await;
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
@@ -410,12 +435,13 @@ mod tests {
         assert!(result.stdout.contains("/dest.txt"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_cp_no_clobber_long_flag() {
         let ctx = make_ctx_with_files(
             vec!["--no-clobber", "/src.txt", "/dest.txt"],
             vec![("/src.txt", "new"), ("/dest.txt", "old")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
         let cmd = CpCommand;
         let result = cmd.execute(ctx).await;

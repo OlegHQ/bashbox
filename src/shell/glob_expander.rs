@@ -7,9 +7,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::fs::FileSystem;
+use crate::fs::{child_path, relative_child, FileSystem};
 
-use super::glob_helpers::{glob_to_regex, globignore_pattern_to_regex, split_globignore_patterns};
+use super::glob_helpers::{
+    glob_to_regex, globignore_pattern_to_regex, regex_lite_is_match, split_globignore_patterns,
+};
 
 /// Options controlling glob expansion behavior.
 #[derive(Debug, Clone)]
@@ -114,11 +116,7 @@ impl GlobExpander {
     /// Match a filename against a glob pattern.
     pub fn match_pattern(&self, name: &str, pattern: &str) -> bool {
         let regex_str = glob_to_regex(pattern, self.extglob);
-        if let Ok(re) = regex_lite::Regex::new(&regex_str) {
-            re.is_match(name)
-        } else {
-            false
-        }
+        regex_lite_is_match(&regex_str, name)
     }
 
     /// Filter results based on GLOBIGNORE and globskipdots.
@@ -140,10 +138,8 @@ impl GlobExpander {
                 if self.has_globignore {
                     for ignore_pattern in &self.globignore_patterns {
                         let regex_str = globignore_pattern_to_regex(ignore_pattern);
-                        if let Ok(re) = regex_lite::Regex::new(&regex_str) {
-                            if re.is_match(path) {
-                                return false;
-                            }
+                        if regex_lite_is_match(&regex_str, path) {
+                            return false;
                         }
                     }
                 }
@@ -206,11 +202,7 @@ impl GlobExpander {
     }
 
     /// Expand an array of arguments, replacing glob patterns with matched files.
-    pub async fn expand_args(
-        &self,
-        args: &[String],
-        quoted_flags: Option<&[bool]>,
-    ) -> Vec<String> {
+    pub async fn expand_args(&self, args: &[String], quoted_flags: Option<&[bool]>) -> Vec<String> {
         let mut result = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             let is_quoted =
@@ -253,8 +245,10 @@ impl GlobExpander {
                 (self.cwd.clone(), String::new())
             }
         } else {
-            let base_segments: Vec<&str> =
-                segments[..first_glob_idx].iter().map(|s| s.as_str()).collect();
+            let base_segments: Vec<&str> = segments[..first_glob_idx]
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
             let base = base_segments.join("/");
             if is_absolute {
                 (format!("/{}", base), format!("/{}", base))
@@ -301,27 +295,15 @@ impl GlobExpander {
             }
 
             if self.match_pattern(&entry.name, current_segment) {
-                let new_fs_path = if fs_path == "/" {
-                    format!("/{}", entry.name)
-                } else {
-                    format!("{}/{}", fs_path, entry.name)
-                };
-
-                let new_result_prefix = if result_prefix.is_empty() {
-                    entry.name.clone()
-                } else if result_prefix == "/" {
-                    format!("/{}", entry.name)
-                } else {
-                    format!("{}/{}", result_prefix, entry.name)
-                };
+                let new_fs_path = child_path(fs_path, &entry.name);
+                let new_result_prefix = relative_child(result_prefix, &entry.name);
 
                 if remaining.is_empty() {
                     results.push(new_result_prefix);
                 } else if entry.is_directory {
-                    let sub_results = Box::pin(
-                        self.expand_segments(&new_fs_path, &new_result_prefix, remaining),
-                    )
-                    .await;
+                    let sub_results =
+                        Box::pin(self.expand_segments(&new_fs_path, &new_result_prefix, remaining))
+                            .await;
                     results.extend(sub_results);
                 }
             }
@@ -341,8 +323,7 @@ impl GlobExpander {
         // If file_pattern contains another **, handle multi-globstar
         if file_pattern.contains("**") && self.is_globstar_valid(file_pattern) {
             let mut results = Vec::new();
-            Box::pin(self.walk_directory_multi_globstar(before, file_pattern, &mut results))
-                .await;
+            Box::pin(self.walk_directory_multi_globstar(before, file_pattern, &mut results)).await;
             results.sort();
             results.dedup();
             return results;
@@ -355,12 +336,7 @@ impl GlobExpander {
     }
 
     /// Walk directory recursively, matching file_pattern at each level.
-    async fn walk_directory(
-        &self,
-        dir: &str,
-        file_pattern: &str,
-        results: &mut Vec<String>,
-    ) {
+    async fn walk_directory(&self, dir: &str, file_pattern: &str, results: &mut Vec<String>) {
         let full_path = self.fs.resolve_path(&self.cwd, dir);
 
         let entries = match self.fs.readdir_with_file_types(&full_path).await {
@@ -373,7 +349,7 @@ impl GlobExpander {
             let entry_path = if dir == "." {
                 entry.name.clone()
             } else {
-                format!("{}/{}", dir, entry.name)
+                relative_child(dir, &entry.name)
             };
 
             if entry.is_directory {
@@ -409,7 +385,7 @@ impl GlobExpander {
             let entry_path = if dir == "." {
                 entry.name.clone()
             } else {
-                format!("{}/{}", dir, entry.name)
+                relative_child(dir, &entry.name)
             };
             if entry.is_directory {
                 dirs.push(entry_path);
@@ -420,7 +396,7 @@ impl GlobExpander {
         let pattern_from_here = if dir == "." {
             sub_pattern.to_string()
         } else {
-            format!("{}/{}", dir, sub_pattern)
+            relative_child(dir, sub_pattern)
         };
         let sub_results = Box::pin(self.expand_recursive(&pattern_from_here)).await;
         results.extend(sub_results);
@@ -451,10 +427,7 @@ mod tests {
         GlobExpander::new(fs, "/home/user".to_string(), None, options)
     }
 
-    fn make_expander_with_env(
-        env: HashMap<String, String>,
-        options: GlobOptions,
-    ) -> GlobExpander {
+    fn make_expander_with_env(env: HashMap<String, String>, options: GlobOptions) -> GlobExpander {
         let fs = Arc::new(InMemoryFs::new());
         GlobExpander::new(fs, "/home/user".to_string(), Some(&env), options)
     }
@@ -656,11 +629,7 @@ mod tests {
         let mut opts = GlobOptions::default();
         opts.globskipdots = false;
         let expander = make_expander(opts);
-        let input = vec![
-            ".".to_string(),
-            "..".to_string(),
-            "file.txt".to_string(),
-        ];
+        let input = vec![".".to_string(), "..".to_string(), "file.txt".to_string()];
         let result = expander.filter_globignore(input.clone());
         assert_eq!(result, input);
     }
@@ -778,9 +747,7 @@ mod tests {
         fs.write_file("/home/user/file.rs", b"fn main(){}")
             .await
             .unwrap();
-        fs.write_file("/home/user/data.json", b"{}")
-            .await
-            .unwrap();
+        fs.write_file("/home/user/data.json", b"{}").await.unwrap();
         fs.write_file("/home/user/.hidden", b"secret")
             .await
             .unwrap();
@@ -826,10 +793,7 @@ mod tests {
         let expander = make_expander_with_fs(fs, "/home/user", None, GlobOptions::default());
         let result = expander.expand("*").await;
         // Should NOT include .hidden, should include dirs
-        assert_eq!(
-            result,
-            vec!["data.json", "file.rs", "file.txt", "sub"]
-        );
+        assert_eq!(result, vec!["data.json", "file.rs", "file.txt", "sub"]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -926,16 +890,9 @@ mod tests {
     async fn test_expand_args_mixed() {
         let fs = setup_test_fs().await;
         let expander = make_expander_with_fs(fs, "/home/user", None, GlobOptions::default());
-        let args = vec![
-            "hello".to_string(),
-            "*.txt".to_string(),
-            "*.rs".to_string(),
-        ];
+        let args = vec!["hello".to_string(), "*.txt".to_string(), "*.rs".to_string()];
         let result = expander.expand_args(&args, None).await;
-        assert_eq!(
-            result,
-            vec!["hello", "file.txt", "file.rs"]
-        );
+        assert_eq!(result, vec!["hello", "file.txt", "file.rs"]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -964,8 +921,7 @@ mod tests {
         let fs = setup_test_fs().await;
         let mut env = HashMap::new();
         env.insert("GLOBIGNORE".to_string(), "*.txt".to_string());
-        let expander =
-            make_expander_with_fs(fs, "/home/user", Some(&env), GlobOptions::default());
+        let expander = make_expander_with_fs(fs, "/home/user", Some(&env), GlobOptions::default());
         let result = expander.expand("*").await;
         // *.txt files should be excluded; GLOBIGNORE also enables dotglob
         // so .hidden is included
@@ -1058,10 +1014,7 @@ mod tests {
     async fn test_expand_args_partial_quoted_flags() {
         let fs = setup_test_fs().await;
         let expander = make_expander_with_fs(fs, "/home/user", None, GlobOptions::default());
-        let args = vec![
-            "*.txt".to_string(),
-            "*.rs".to_string(),
-        ];
+        let args = vec!["*.txt".to_string(), "*.rs".to_string()];
         // Only first arg is quoted
         let quoted = vec![true, false];
         let result = expander.expand_args(&args, Some(&quoted)).await;

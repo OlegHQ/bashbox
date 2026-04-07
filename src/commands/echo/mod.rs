@@ -1,6 +1,6 @@
 // src/commands/echo/mod.rs
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct EchoCommand;
 
@@ -234,24 +234,9 @@ fn process_escapes(input: &str) -> EscapeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
 
-    fn make_ctx(args: Vec<&str>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_simple_text() {
         let ctx = make_ctx(vec!["hello", "world"]);
         let cmd = EchoCommand;
@@ -260,7 +245,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_empty() {
         let ctx = make_ctx(vec![]);
         let cmd = EchoCommand;
@@ -268,7 +253,7 @@ mod tests {
         assert_eq!(result.stdout, "\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_multiple_args() {
         let ctx = make_ctx(vec!["one", "two", "three"]);
         let cmd = EchoCommand;
@@ -276,7 +261,7 @@ mod tests {
         assert_eq!(result.stdout, "one two three\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_n_flag() {
         let ctx = make_ctx(vec!["-n", "hello"]);
         let cmd = EchoCommand;
@@ -284,7 +269,7 @@ mod tests {
         assert_eq!(result.stdout, "hello");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_e_flag_newline() {
         let ctx = make_ctx(vec!["-e", "hello\\nworld"]);
         let cmd = EchoCommand;
@@ -292,7 +277,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\nworld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_e_flag_tab() {
         let ctx = make_ctx(vec!["-e", "col1\\tcol2"]);
         let cmd = EchoCommand;
@@ -300,7 +285,7 @@ mod tests {
         assert_eq!(result.stdout, "col1\tcol2\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_e_flag_carriage_return() {
         let ctx = make_ctx(vec!["-e", "hello\\rworld"]);
         let cmd = EchoCommand;
@@ -308,7 +293,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\rworld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_combined_en_flags() {
         let ctx = make_ctx(vec!["-en", "hello\\nworld"]);
         let cmd = EchoCommand;
@@ -316,7 +301,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\nworld");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_combined_ne_flags() {
         let ctx = make_ctx(vec!["-ne", "a\\tb"]);
         let cmd = EchoCommand;
@@ -324,7 +309,7 @@ mod tests {
         assert_eq!(result.stdout, "a\tb");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_e_disable() {
         let ctx = make_ctx(vec!["-E", "hello\\nworld"]);
         let cmd = EchoCommand;
@@ -332,7 +317,7 @@ mod tests {
         assert_eq!(result.stdout, "hello\\nworld\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_echo_multiple_escapes() {
         let ctx = make_ctx(vec!["-e", "a\\nb\\nc"]);
         let cmd = EchoCommand;

@@ -3,10 +3,10 @@
 //! Implements the -v (variable is set) test operator.
 //! Used in [[ ]] and test/[ ] commands.
 
-use std::collections::HashMap;
-use regex_lite::Regex;
-use crate::interpreter::types::InterpreterState;
 use crate::interpreter::helpers::array::{get_array_indices, get_assoc_array_keys};
+use crate::interpreter::types::InterpreterState;
+use regex_lite::Regex;
+use std::collections::HashMap;
 
 /// Result of variable test evaluation
 pub struct VariableTestResult {
@@ -44,7 +44,10 @@ pub fn evaluate_variable_test(
         let index_expr = &caps[2];
 
         // Check if this is an associative array
-        let is_assoc = state.associative_arrays.as_ref().map_or(false, |a| a.contains(array_name));
+        let is_assoc = state
+            .associative_arrays
+            .as_ref()
+            .map_or(false, |a| a.contains(array_name));
 
         if is_assoc {
             // For associative arrays, use the key as-is (strip quotes if present)
@@ -82,14 +85,20 @@ pub fn evaluate_variable_test(
                 let line_num = current_line.unwrap_or(0);
                 if indices.is_empty() {
                     // Empty array with negative index - emit warning and return false
-                    let stderr = format!("bash: line {}: {}: bad array subscript\n", line_num, array_name);
+                    let stderr = format!(
+                        "bash: line {}: {}: bad array subscript\n",
+                        line_num, array_name
+                    );
                     return (false, Some(stderr));
                 }
                 let max_index = *indices.iter().max().unwrap_or(&0);
                 idx = max_index + 1 + idx;
                 if idx < 0 {
                     // Out of bounds negative index - emit warning and return false
-                    let stderr = format!("bash: line {}: {}: bad array subscript\n", line_num, array_name);
+                    let stderr = format!(
+                        "bash: line {}: {}: bad array subscript\n",
+                        line_num, array_name
+                    );
                     return (false, Some(stderr));
                 }
             }
@@ -109,7 +118,11 @@ pub fn evaluate_variable_test(
 
     // Check if it's an array with elements (test -v arrayname without subscript)
     // For associative arrays, check if there are any keys
-    if state.associative_arrays.as_ref().map_or(false, |a| a.contains(operand)) {
+    if state
+        .associative_arrays
+        .as_ref()
+        .map_or(false, |a| a.contains(operand))
+    {
         return (!get_assoc_array_keys(env, operand).is_empty(), None);
     }
 
@@ -146,7 +159,10 @@ where
         let index_expr = &caps[2];
 
         // Check if this is an associative array
-        let is_assoc = state.associative_arrays.as_ref().map_or(false, |a| a.contains(array_name));
+        let is_assoc = state
+            .associative_arrays
+            .as_ref()
+            .map_or(false, |a| a.contains(array_name));
 
         if is_assoc {
             // For associative arrays, use the key as-is (strip quotes if present)
@@ -173,10 +189,12 @@ where
             eval_fn(index_expr)
         } else {
             None
-        }.or_else(|| {
+        }
+        .or_else(|| {
             // Fallback: try to parse as numeric
             index_expr.parse::<i64>().ok()
-        }).or_else(|| {
+        })
+        .or_else(|| {
             // Last resort: try looking up as variable
             env.get(index_expr).and_then(|v| v.parse::<i64>().ok())
         });
@@ -187,13 +205,19 @@ where
                 let indices = get_array_indices(env, array_name);
                 let line_num = current_line.unwrap_or(0);
                 if indices.is_empty() {
-                    let stderr = format!("bash: line {}: {}: bad array subscript\n", line_num, array_name);
+                    let stderr = format!(
+                        "bash: line {}: {}: bad array subscript\n",
+                        line_num, array_name
+                    );
                     return VariableTestResult::new(false, Some(stderr));
                 }
                 let max_index = *indices.iter().max().unwrap_or(&0);
                 idx = max_index + 1 + idx;
                 if idx < 0 {
-                    let stderr = format!("bash: line {}: {}: bad array subscript\n", line_num, array_name);
+                    let stderr = format!(
+                        "bash: line {}: {}: bad array subscript\n",
+                        line_num, array_name
+                    );
                     return VariableTestResult::new(false, Some(stderr));
                 }
             }
@@ -211,7 +235,11 @@ where
     }
 
     // Check if it's an array with elements
-    if state.associative_arrays.as_ref().map_or(false, |a| a.contains(operand)) {
+    if state
+        .associative_arrays
+        .as_ref()
+        .map_or(false, |a| a.contains(operand))
+    {
         return VariableTestResult::new(!get_assoc_array_keys(env, operand).is_empty(), None);
     }
 
@@ -220,7 +248,10 @@ where
 
 /// Check if a variable is a nameref (-R test).
 pub fn evaluate_nameref_test(state: &InterpreterState, operand: &str) -> bool {
-    state.namerefs.as_ref().map_or(false, |refs| refs.contains(operand))
+    state
+        .namerefs
+        .as_ref()
+        .map_or(false, |refs| refs.contains(operand))
 }
 
 #[cfg(test)]

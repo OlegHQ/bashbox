@@ -1,0 +1,8 @@
+name = "just-bash"
+version = "0.0.1"
+
+[dependencies]
+"github.com/oleghq/agent-configs/plugins/simplifier" = {}
+"github.com/oleghq/agent-configs/plugins/rust-dev" = {}
+"github.com/anthropics/claude-plugins-official/plugins/code-simplifier" = {}
+

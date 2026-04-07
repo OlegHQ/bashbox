@@ -12,18 +12,23 @@
 //!
 //! Also aliased as 'typeset'
 
-use std::collections::HashSet;
 use regex_lite::Regex;
+use std::collections::HashSet;
 
 use crate::interpreter::arithmetic::evaluate_array_index;
+use crate::interpreter::builtins::declare_syntax::{
+    append_scalar_re, array_assign_re, keyed_elem_capture_re, keyed_elem_prefix_re, name_prefix_re,
+    valid_name_re, valid_target_re,
+};
 use crate::interpreter::builtins::{
-    parse_array_elements, parse_assoc_array_literal, list_all_variables, list_associative_arrays,
-    list_indexed_arrays, print_all_variables, print_specific_variables, PrintAllFilters, BuiltinResult,
+    list_all_variables, list_associative_arrays, list_indexed_arrays, parse_array_elements,
+    parse_assoc_array_literal, print_all_variables, print_specific_variables, BuiltinResult,
+    PrintAllFilters,
 };
 use crate::interpreter::helpers::{
-    clear_array, expand_tildes_in_value, get_array_indices, is_nameref, is_readonly,
-    mark_exported, mark_nameref, mark_nameref_bound, mark_nameref_invalid, mark_readonly,
-    resolve_nameref, target_exists, unmark_exported, unmark_nameref,
+    clear_array, expand_tildes_in_value, get_array_indices, is_nameref, is_readonly, mark_exported,
+    mark_nameref, mark_nameref_bound, mark_nameref_invalid, mark_readonly, resolve_nameref,
+    target_exists, unmark_exported, unmark_nameref,
 };
 use crate::interpreter::types::InterpreterState;
 
@@ -36,12 +41,19 @@ pub fn mark_integer(state: &mut InterpreterState, name: &str) {
     if state.integer_vars.is_none() {
         state.integer_vars = Some(HashSet::new());
     }
-    state.integer_vars.as_mut().unwrap().insert(name.to_string());
+    state
+        .integer_vars
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
 }
 
 /// Check if a variable has the integer attribute.
 pub fn is_integer(state: &InterpreterState, name: &str) -> bool {
-    state.integer_vars.as_ref().map_or(false, |v| v.contains(name))
+    state
+        .integer_vars
+        .as_ref()
+        .map_or(false, |v| v.contains(name))
 }
 
 /// Mark a variable as having the lowercase attribute.
@@ -49,7 +61,11 @@ fn mark_lowercase(state: &mut InterpreterState, name: &str) {
     if state.lowercase_vars.is_none() {
         state.lowercase_vars = Some(HashSet::new());
     }
-    state.lowercase_vars.as_mut().unwrap().insert(name.to_string());
+    state
+        .lowercase_vars
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
     // -l and -u are mutually exclusive; -l clears -u
     if let Some(ref mut upper) = state.uppercase_vars {
         upper.remove(name);
@@ -58,7 +74,10 @@ fn mark_lowercase(state: &mut InterpreterState, name: &str) {
 
 /// Check if a variable has the lowercase attribute.
 fn is_lowercase(state: &InterpreterState, name: &str) -> bool {
-    state.lowercase_vars.as_ref().map_or(false, |v| v.contains(name))
+    state
+        .lowercase_vars
+        .as_ref()
+        .map_or(false, |v| v.contains(name))
 }
 
 /// Mark a variable as having the uppercase attribute.
@@ -66,7 +85,11 @@ fn mark_uppercase(state: &mut InterpreterState, name: &str) {
     if state.uppercase_vars.is_none() {
         state.uppercase_vars = Some(HashSet::new());
     }
-    state.uppercase_vars.as_mut().unwrap().insert(name.to_string());
+    state
+        .uppercase_vars
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
     // -l and -u are mutually exclusive; -u clears -l
     if let Some(ref mut lower) = state.lowercase_vars {
         lower.remove(name);
@@ -75,7 +98,10 @@ fn mark_uppercase(state: &mut InterpreterState, name: &str) {
 
 /// Check if a variable has the uppercase attribute.
 fn is_uppercase(state: &InterpreterState, name: &str) -> bool {
-    state.uppercase_vars.as_ref().map_or(false, |v| v.contains(name))
+    state
+        .uppercase_vars
+        .as_ref()
+        .map_or(false, |v| v.contains(name))
 }
 
 /// Apply case transformation based on variable attributes.
@@ -106,8 +132,7 @@ fn evaluate_integer_value(value: &str) -> String {
 /// Returns None if not an array assignment pattern
 fn parse_array_assignment(arg: &str) -> Option<(String, String, String)> {
     // Check for variable name at start
-    let name_re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
-    let name_match = name_re.find(arg)?;
+    let name_match = name_prefix_re().find(arg)?;
     let name = name_match.as_str().to_string();
     let mut pos = name.len();
 
@@ -162,7 +187,11 @@ pub fn mark_local_var_depth(state: &mut InterpreterState, name: &str) {
     if state.local_var_depth.is_none() {
         state.local_var_depth = Some(std::collections::HashMap::new());
     }
-    state.local_var_depth.as_mut().unwrap().insert(name.to_string(), state.call_depth);
+    state
+        .local_var_depth
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string(), state.call_depth);
 }
 
 // ============================================================================
@@ -330,7 +359,9 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             };
         }
         // Check if all specified functions exist
-        let all_exist = processed_args.iter().all(|name| state.functions.contains_key(name));
+        let all_exist = processed_args
+            .iter()
+            .all(|name| state.functions.contains_key(name));
         return BuiltinResult {
             stdout: String::new(),
             stderr: String::new(),
@@ -345,13 +376,16 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
     // Print mode without args (declare -p): list all variables with attributes
     if print_mode && processed_args.is_empty() {
-        return print_all_variables(state, &PrintAllFilters {
-            filter_export: declare_export,
-            filter_readonly: declare_readonly,
-            filter_nameref: declare_nameref,
-            filter_indexed_array: declare_array,
-            filter_assoc_array: declare_assoc,
-        });
+        return print_all_variables(
+            state,
+            &PrintAllFilters {
+                filter_export: declare_export,
+                filter_readonly: declare_readonly,
+                filter_nameref: declare_nameref,
+                filter_indexed_array: declare_array,
+                filter_assoc_array: declare_assoc,
+            },
+        );
     }
 
     // Handle declare -A without arguments: list all associative arrays
@@ -373,15 +407,10 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
     let mut stderr = String::new();
     let mut exit_code = 0;
 
-    // Valid variable name regex
-    let valid_name_re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
-    let valid_target_re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*(\[.+\])?$").unwrap();
-
     // Process each argument
     for arg in &processed_args {
         // Check for array assignment: name=(...)
-        let array_re = Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)=\((.*)\)$").unwrap();
-        if let Some(caps) = array_re.captures(arg) {
+        if let Some(caps) = array_assign_re().captures(arg) {
             if !remove_array {
                 let name = caps.get(1).unwrap().as_str();
                 let content = caps.get(2).unwrap().as_str();
@@ -390,14 +419,24 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                 if declare_assoc {
                     let existing_indices = get_array_indices(&state.env, name);
                     if !existing_indices.is_empty() {
-                        stderr.push_str(&format!("bash: declare: {}: cannot convert indexed to associative array\n", name));
+                        stderr.push_str(&format!(
+                            "bash: declare: {}: cannot convert indexed to associative array\n",
+                            name
+                        ));
                         exit_code = 1;
                         continue;
                     }
                 }
                 if declare_array || (!declare_assoc && !declare_array) {
-                    if state.associative_arrays.as_ref().map_or(false, |a| a.contains(name)) {
-                        stderr.push_str(&format!("bash: declare: {}: cannot convert associative to indexed array\n", name));
+                    if state
+                        .associative_arrays
+                        .as_ref()
+                        .map_or(false, |a| a.contains(name))
+                    {
+                        stderr.push_str(&format!(
+                            "bash: declare: {}: cannot convert associative to indexed array\n",
+                            name
+                        ));
                         exit_code = 1;
                         continue;
                     }
@@ -413,7 +452,11 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                     if state.associative_arrays.is_none() {
                         state.associative_arrays = Some(HashSet::new());
                     }
-                    state.associative_arrays.as_mut().unwrap().insert(name.to_string());
+                    state
+                        .associative_arrays
+                        .as_mut()
+                        .unwrap()
+                        .insert(name.to_string());
                 }
 
                 // Clear existing array elements
@@ -445,15 +488,13 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                 } else {
                     // Indexed array
                     let elements = parse_array_elements(content);
-                    let has_keyed = elements.iter().any(|el| {
-                        let keyed_re = Regex::new(r"^\[[^\]]+\]=").unwrap();
-                        keyed_re.is_match(el)
-                    });
+                    let has_keyed = elements
+                        .iter()
+                        .any(|el| keyed_elem_prefix_re().is_match(el));
                     if has_keyed {
                         let mut current_index: i64 = 0;
-                        let keyed_re = Regex::new(r"^\[([^\]]+)\]=(.*)$").unwrap();
                         for element in &elements {
-                            if let Some(caps) = keyed_re.captures(element) {
+                            if let Some(caps) = keyed_elem_capture_re().captures(element) {
                                 let index_expr = caps.get(1).unwrap().as_str();
                                 let raw_value = caps.get(2).unwrap().as_str();
                                 let value = expand_tildes_in_value(&state.env, raw_value);
@@ -462,15 +503,21 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                                 current_index = index + 1;
                             } else {
                                 let value = expand_tildes_in_value(&state.env, element);
-                                state.env.insert(format!("{}_{}", name, current_index), value);
+                                state
+                                    .env
+                                    .insert(format!("{}_{}", name, current_index), value);
                                 current_index += 1;
                             }
                         }
                     } else {
                         for (idx, element) in elements.iter().enumerate() {
-                            state.env.insert(format!("{}_{}", name, idx), element.clone());
+                            state
+                                .env
+                                .insert(format!("{}_{}", name, idx), element.clone());
                         }
-                        state.env.insert(format!("{}__length", name), elements.len().to_string());
+                        state
+                            .env
+                            .insert(format!("{}__length", name), elements.len().to_string());
                     }
                 }
 
@@ -538,12 +585,15 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             state.env.insert(format!("{}_{}", name, index), value);
 
             // Update array length if needed
-            let current_length: i64 = state.env
+            let current_length: i64 = state
+                .env
                 .get(&format!("{}__length", name))
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
             if index >= current_length {
-                state.env.insert(format!("{}__length", name), (index + 1).to_string());
+                state
+                    .env
+                    .insert(format!("{}__length", name), (index + 1).to_string());
             }
 
             // Mark as local if inside a function
@@ -561,10 +611,10 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
         }
 
         // Check for += append syntax
-        let append_re = Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\+=(.*)$").unwrap();
-        if let Some(caps) = append_re.captures(arg) {
+        if let Some(caps) = append_scalar_re().captures(arg) {
             let name = caps.get(1).unwrap().as_str();
-            let mut append_value = expand_tildes_in_value(&state.env, caps.get(2).unwrap().as_str());
+            let mut append_value =
+                expand_tildes_in_value(&state.env, caps.get(2).unwrap().as_str());
 
             // Check if variable is readonly
             if is_readonly(state, name) {
@@ -594,7 +644,10 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             // Check if this is an array
             let existing_indices = get_array_indices(&state.env, name);
             let is_array = !existing_indices.is_empty()
-                || state.associative_arrays.as_ref().map_or(false, |a| a.contains(name));
+                || state
+                    .associative_arrays
+                    .as_ref()
+                    .map_or(false, |a| a.contains(name));
 
             if is_integer(state, name) {
                 let existing = state.env.get(name).map(|s| s.as_str()).unwrap_or("0");
@@ -606,13 +659,21 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                 // For arrays, append to element 0
                 append_value = apply_case_transform(state, name, &append_value);
                 let element0_key = format!("{}_0", name);
-                let existing = state.env.get(&element0_key).map(|s| s.as_str()).unwrap_or("");
-                state.env.insert(element0_key, format!("{}{}", existing, append_value));
+                let existing = state
+                    .env
+                    .get(&element0_key)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                state
+                    .env
+                    .insert(element0_key, format!("{}{}", existing, append_value));
             } else {
                 // Apply case transformation
                 append_value = apply_case_transform(state, name, &append_value);
                 let existing = state.env.get(name).map(|s| s.as_str()).unwrap_or("");
-                state.env.insert(name.to_string(), format!("{}{}", existing, append_value));
+                state
+                    .env
+                    .insert(name.to_string(), format!("{}{}", existing, append_value));
             }
 
             // Mark as local if inside a function
@@ -639,8 +700,11 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             let mut value = arg[eq_idx + 1..].to_string();
 
             // Validate variable name
-            if !valid_name_re.is_match(name) {
-                stderr.push_str(&format!("bash: typeset: `{}': not a valid identifier\n", name));
+            if !valid_name_re().is_match(name) {
+                stderr.push_str(&format!(
+                    "bash: typeset: `{}': not a valid identifier\n",
+                    name
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -661,8 +725,11 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
 
             // For namerefs being declared with a value
             if declare_nameref {
-                if !value.is_empty() && !valid_target_re.is_match(&value) {
-                    stderr.push_str(&format!("bash: declare: `{}': invalid variable name for name reference\n", value));
+                if !value.is_empty() && !valid_target_re().is_match(&value) {
+                    stderr.push_str(&format!(
+                        "bash: declare: `{}': invalid variable name for name reference\n",
+                        value
+                    ));
                     exit_code = 1;
                     continue;
                 }
@@ -736,8 +803,11 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             let name = arg.as_str();
 
             // Validate variable name
-            if !valid_name_re.is_match(name) {
-                stderr.push_str(&format!("bash: typeset: `{}': not a valid identifier\n", name));
+            if !valid_name_re().is_match(name) {
+                stderr.push_str(&format!(
+                    "bash: typeset: `{}': not a valid identifier\n",
+                    name
+                ));
                 exit_code = 1;
                 continue;
             }
@@ -756,7 +826,7 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
                 mark_nameref(state, name);
                 let existing_value = state.env.get(name).cloned();
                 if let Some(ref val) = existing_value {
-                    if !val.is_empty() && !valid_target_re.is_match(val) {
+                    if !val.is_empty() && !valid_target_re().is_match(val) {
                         mark_nameref_invalid(state, name);
                     } else if target_exists(state, &state.env.clone(), val) {
                         mark_nameref_bound(state, name);
@@ -789,28 +859,42 @@ pub fn handle_declare(state: &mut InterpreterState, args: &[String]) -> BuiltinR
             if declare_assoc {
                 let existing_indices = get_array_indices(&state.env, name);
                 if !existing_indices.is_empty() {
-                    stderr.push_str(&format!("bash: declare: {}: cannot convert indexed to associative array\n", name));
+                    stderr.push_str(&format!(
+                        "bash: declare: {}: cannot convert indexed to associative array\n",
+                        name
+                    ));
                     exit_code = 1;
                     continue;
                 }
                 if state.associative_arrays.is_none() {
                     state.associative_arrays = Some(HashSet::new());
                 }
-                state.associative_arrays.as_mut().unwrap().insert(name.to_string());
+                state
+                    .associative_arrays
+                    .as_mut()
+                    .unwrap()
+                    .insert(name.to_string());
             }
 
             // Check if any array elements exist
             let has_array_elements = state.env.keys().any(|key| {
-                key.starts_with(&format!("{}_", name)) && !key.starts_with(&format!("{}__length", name))
+                key.starts_with(&format!("{}_", name))
+                    && !key.starts_with(&format!("{}__length", name))
             });
             if !state.env.contains_key(name) && !has_array_elements {
                 if declare_array || declare_assoc {
-                    state.env.insert(format!("{}__length", name), "0".to_string());
+                    state
+                        .env
+                        .insert(format!("{}__length", name), "0".to_string());
                 } else {
                     if state.declared_vars.is_none() {
                         state.declared_vars = Some(HashSet::new());
                     }
-                    state.declared_vars.as_mut().unwrap().insert(name.to_string());
+                    state
+                        .declared_vars
+                        .as_mut()
+                        .unwrap()
+                        .insert(name.to_string());
                 }
             }
 
@@ -862,7 +946,9 @@ fn save_array_to_local_scope(state: &mut InterpreterState, name: &str) {
     }
     // Save array elements
     let prefix = format!("{}_", name);
-    let keys_to_save: Vec<String> = state.env.keys()
+    let keys_to_save: Vec<String> = state
+        .env
+        .keys()
         .filter(|k| k.starts_with(&prefix) && !k.contains("__"))
         .cloned()
         .collect();
@@ -915,7 +1001,8 @@ pub fn handle_readonly(state: &mut InterpreterState, args: &[String]) -> Builtin
     // When called with no args (or just -p), list readonly variables
     if processed_args.is_empty() {
         let mut stdout = String::new();
-        let mut readonly_names: Vec<String> = state.readonly_vars
+        let mut readonly_names: Vec<String> = state
+            .readonly_vars
             .as_ref()
             .map_or(Vec::new(), |v| v.iter().cloned().collect());
         readonly_names.sort();
@@ -934,8 +1021,7 @@ pub fn handle_readonly(state: &mut InterpreterState, args: &[String]) -> Builtin
 
     for arg in &processed_args {
         // Check for += append syntax: readonly NAME+=value
-        let append_re = Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\+=(.*)$").unwrap();
-        if let Some(caps) = append_re.captures(arg) {
+        if let Some(caps) = append_scalar_re().captures(arg) {
             let name = caps.get(1).unwrap().as_str();
             let append_value = expand_tildes_in_value(&state.env, caps.get(2).unwrap().as_str());
 
@@ -950,7 +1036,9 @@ pub fn handle_readonly(state: &mut InterpreterState, args: &[String]) -> Builtin
 
             // Append to existing value
             let existing = state.env.get(name).map(|s| s.as_str()).unwrap_or("");
-            state.env.insert(name.to_string(), format!("{}{}", existing, append_value));
+            state
+                .env
+                .insert(name.to_string(), format!("{}{}", existing, append_value));
             mark_readonly(state, name);
             continue;
         }
@@ -1038,7 +1126,10 @@ mod tests {
         let mut state = make_state();
         let result = handle_declare(&mut state, &["-x".to_string(), "foo=bar".to_string()]);
         assert_eq!(result.exit_code, 0);
-        assert!(state.exported_vars.as_ref().map_or(false, |v| v.contains("foo")));
+        assert!(state
+            .exported_vars
+            .as_ref()
+            .map_or(false, |v| v.contains("foo")));
     }
 
     #[test]

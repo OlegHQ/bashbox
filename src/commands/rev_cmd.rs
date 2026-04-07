@@ -1,5 +1,7 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::{invalid_option, wants_help};
+use crate::commands::errors::no_such_file;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct RevCommand;
 
@@ -33,7 +35,7 @@ impl Command for RevCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "rev - reverse lines characterwise\n\nUsage: rev [file ...]\n\nCopies the specified files to standard output, reversing the order of characters in every line.\n".to_string()
             );
@@ -48,7 +50,7 @@ impl Command for RevCommand {
             } else if arg == "--" {
                 after_dashdash = true;
             } else if arg.starts_with('-') && arg != "-" {
-                return CommandResult::error(format!("rev: invalid option -- '{}'\n", &arg[1..]));
+                return CommandResult::error(invalid_option("rev", &arg[1..]));
             } else {
                 files.push(arg.clone());
             }
@@ -71,7 +73,7 @@ impl Command for RevCommand {
                         Err(_) => {
                             return CommandResult::with_exit_code(
                                 output,
-                                format!("rev: {}: No such file or directory\n", file),
+                                no_such_file("rev", file),
                                 1,
                             );
                         }
@@ -87,11 +89,11 @@ impl Command for RevCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rev_stdin() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -109,7 +111,7 @@ mod tests {
         assert_eq!(result.stdout, "olleh\ndlrow\n");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rev_no_trailing_newline() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

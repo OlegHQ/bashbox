@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 use regex_lite::Regex;
 
 pub struct ExprCommand;
@@ -21,14 +21,14 @@ impl Command for ExprCommand {
 
         match evaluate_expr(&ctx.args) {
             Ok(result) => {
-                let exit_code = if result == "0" || result.is_empty() { 1 } else { 0 };
+                let exit_code = if result == "0" || result.is_empty() {
+                    1
+                } else {
+                    0
+                };
                 CommandResult::with_exit_code(format!("{}\n", result), String::new(), exit_code)
             }
-            Err(e) => CommandResult::with_exit_code(
-                String::new(),
-                format!("expr: {}\n", e),
-                2,
-            ),
+            Err(e) => CommandResult::with_exit_code(String::new(), format!("expr: {}\n", e), 2),
         }
     }
 }
@@ -122,7 +122,11 @@ impl<'a> ExprParser<'a> {
                     _ => false,
                 }
             };
-            left = if result { "1".to_string() } else { "0".to_string() };
+            left = if result {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            };
         }
         Ok(left)
     }
@@ -181,9 +185,15 @@ impl<'a> ExprParser<'a> {
                 Ok(re) => {
                     if let Some(caps) = re.captures(&left) {
                         if caps.len() > 1 {
-                            left = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                            left = caps
+                                .get(1)
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_default();
                         } else {
-                            left = caps.get(0).map(|m| m.as_str().len().to_string()).unwrap_or("0".to_string());
+                            left = caps
+                                .get(0)
+                                .map(|m| m.as_str().len().to_string())
+                                .unwrap_or("0".to_string());
                         }
                     } else {
                         left = "0".to_string();
@@ -207,9 +217,15 @@ impl<'a> ExprParser<'a> {
                     Ok(re) => {
                         if let Some(caps) = re.captures(&s) {
                             if caps.len() > 1 {
-                                Ok(caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default())
+                                Ok(caps
+                                    .get(1)
+                                    .map(|m| m.as_str().to_string())
+                                    .unwrap_or_default())
                             } else {
-                                Ok(caps.get(0).map(|m| m.as_str().len().to_string()).unwrap_or("0".to_string()))
+                                Ok(caps
+                                    .get(0)
+                                    .map(|m| m.as_str().len().to_string())
+                                    .unwrap_or("0".to_string()))
                             }
                         } else {
                             Ok("0".to_string())
@@ -221,8 +237,14 @@ impl<'a> ExprParser<'a> {
             "substr" => {
                 self.advance();
                 let s = self.parse_primary()?;
-                let pos: usize = self.parse_primary()?.parse().map_err(|_| "non-integer argument")?;
-                let len: usize = self.parse_primary()?.parse().map_err(|_| "non-integer argument")?;
+                let pos: usize = self
+                    .parse_primary()?
+                    .parse()
+                    .map_err(|_| "non-integer argument")?;
+                let len: usize = self
+                    .parse_primary()?
+                    .parse()
+                    .map_err(|_| "non-integer argument")?;
                 let start = pos.saturating_sub(1);
                 Ok(s.chars().skip(start).take(len).collect())
             }
@@ -263,9 +285,9 @@ impl<'a> ExprParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -279,63 +301,63 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_missing_operand() {
         let ctx = create_ctx(vec![]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stderr.contains("missing operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_single_value() {
         let ctx = create_ctx(vec!["42"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("42"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_addition() {
         let ctx = create_ctx(vec!["2", "+", "3"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("5"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_subtraction() {
         let ctx = create_ctx(vec!["10", "-", "4"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("6"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_multiplication() {
         let ctx = create_ctx(vec!["3", "*", "4"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("12"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_division() {
         let ctx = create_ctx(vec!["15", "/", "3"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("5"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_comparison() {
         let ctx = create_ctx(vec!["5", ">", "3"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("1"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_length() {
         let ctx = create_ctx(vec!["length", "hello"]);
         let result = ExprCommand.execute(ctx).await;
         assert!(result.stdout.contains("5"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_substr() {
         let ctx = create_ctx(vec!["substr", "hello", "2", "3"]);
         let result = ExprCommand.execute(ctx).await;
@@ -345,6 +367,9 @@ mod tests {
     #[test]
     fn test_evaluate_expr() {
         assert_eq!(evaluate_expr(&["5".to_string()]).unwrap(), "5");
-        assert_eq!(evaluate_expr(&["2".to_string(), "+".to_string(), "3".to_string()]).unwrap(), "5");
+        assert_eq!(
+            evaluate_expr(&["2".to_string(), "+".to_string(), "3".to_string()]).unwrap(),
+            "5"
+        );
     }
 }

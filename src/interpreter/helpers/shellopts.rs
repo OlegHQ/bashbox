@@ -89,13 +89,19 @@ pub fn build_bashopts(shopt_options: &ShoptOptions) -> String {
 
 /// Update the SHELLOPTS environment variable to reflect current shell options.
 /// Should be called whenever shell options change (via set -o or shopt -o).
-pub fn update_shellopts(env: &mut std::collections::HashMap<String, String>, options: &ShellOptions) {
+pub fn update_shellopts(
+    env: &mut std::collections::HashMap<String, String>,
+    options: &ShellOptions,
+) {
     env.insert("SHELLOPTS".to_string(), build_shellopts(options));
 }
 
 /// Update the BASHOPTS environment variable to reflect current shopt options.
 /// Should be called whenever shopt options change.
-pub fn update_bashopts(env: &mut std::collections::HashMap<String, String>, shopt_options: &ShoptOptions) {
+pub fn update_bashopts(
+    env: &mut std::collections::HashMap<String, String>,
+    shopt_options: &ShoptOptions,
+) {
     env.insert("BASHOPTS".to_string(), build_bashopts(shopt_options));
 }
 

@@ -1,5 +1,4 @@
 /// Option parsing for curl command
-
 use super::form::{encode_form_data, parse_form_field};
 use super::types::CurlOptions;
 
@@ -107,25 +106,37 @@ pub fn parse_options(args: &[String]) -> Result<CurlOptions, String> {
             let val = args.get(i).cloned().unwrap_or_default();
             options.headers.push(("User-Agent".to_string(), val));
         } else if arg.starts_with("-A") && arg.len() > 2 && !arg.starts_with("--") {
-            options.headers.push(("User-Agent".to_string(), arg[2..].to_string()));
+            options
+                .headers
+                .push(("User-Agent".to_string(), arg[2..].to_string()));
         } else if let Some(val) = arg.strip_prefix("--user-agent=") {
-            options.headers.push(("User-Agent".to_string(), val.to_string()));
+            options
+                .headers
+                .push(("User-Agent".to_string(), val.to_string()));
         } else if arg == "-e" || arg == "--referer" {
             i += 1;
             let val = args.get(i).cloned().unwrap_or_default();
             options.headers.push(("Referer".to_string(), val));
         } else if arg.starts_with("-e") && arg.len() > 2 && !arg.starts_with("--") {
-            options.headers.push(("Referer".to_string(), arg[2..].to_string()));
+            options
+                .headers
+                .push(("Referer".to_string(), arg[2..].to_string()));
         } else if let Some(val) = arg.strip_prefix("--referer=") {
-            options.headers.push(("Referer".to_string(), val.to_string()));
+            options
+                .headers
+                .push(("Referer".to_string(), val.to_string()));
         } else if arg == "-b" || arg == "--cookie" {
             i += 1;
             let val = args.get(i).cloned().unwrap_or_default();
             options.headers.push(("Cookie".to_string(), val));
         } else if arg.starts_with("-b") && arg.len() > 2 && !arg.starts_with("--") {
-            options.headers.push(("Cookie".to_string(), arg[2..].to_string()));
+            options
+                .headers
+                .push(("Cookie".to_string(), arg[2..].to_string()));
         } else if let Some(val) = arg.strip_prefix("--cookie=") {
-            options.headers.push(("Cookie".to_string(), val.to_string()));
+            options
+                .headers
+                .push(("Cookie".to_string(), val.to_string()));
         } else if arg == "-c" || arg == "--cookie-jar" {
             i += 1;
             options.cookie_jar = args.get(i).cloned();
@@ -250,14 +261,20 @@ mod tests {
 
     #[test]
     fn test_parse_post_with_data() {
-        let opts = parse_options(&args(&["-X", "POST", "-d", "data", "https://example.com"])).unwrap();
+        let opts =
+            parse_options(&args(&["-X", "POST", "-d", "data", "https://example.com"])).unwrap();
         assert_eq!(opts.method, "POST");
         assert_eq!(opts.data.as_deref(), Some("data"));
     }
 
     #[test]
     fn test_parse_header() {
-        let opts = parse_options(&args(&["-H", "Content-Type: application/json", "https://example.com"])).unwrap();
+        let opts = parse_options(&args(&[
+            "-H",
+            "Content-Type: application/json",
+            "https://example.com",
+        ]))
+        .unwrap();
         assert_eq!(opts.headers.len(), 1);
         assert_eq!(opts.headers[0].0, "Content-Type");
         assert_eq!(opts.headers[0].1, "application/json");
@@ -279,7 +296,8 @@ mod tests {
 
     #[test]
     fn test_parse_form_field() {
-        let opts = parse_options(&args(&["-F", "file=@upload.txt", "https://example.com"])).unwrap();
+        let opts =
+            parse_options(&args(&["-F", "file=@upload.txt", "https://example.com"])).unwrap();
         assert_eq!(opts.form_fields.len(), 1);
         assert_eq!(opts.form_fields[0].name, "file");
         assert_eq!(opts.method, "POST");
@@ -294,7 +312,8 @@ mod tests {
 
     #[test]
     fn test_multiple_data_flags_accumulate() {
-        let opts = parse_options(&args(&["-d", "a=1", "-d", "b=2", "https://example.com"])).unwrap();
+        let opts =
+            parse_options(&args(&["-d", "a=1", "-d", "b=2", "https://example.com"])).unwrap();
         assert_eq!(opts.data.as_deref(), Some("a=1&b=2"));
     }
 
@@ -333,7 +352,12 @@ mod tests {
 
     #[test]
     fn test_data_urlencode() {
-        let opts = parse_options(&args(&["--data-urlencode", "name=hello world", "https://example.com"])).unwrap();
+        let opts = parse_options(&args(&[
+            "--data-urlencode",
+            "name=hello world",
+            "https://example.com",
+        ]))
+        .unwrap();
         assert_eq!(opts.data.as_deref(), Some("name=hello%20world"));
         assert_eq!(opts.method, "POST");
     }

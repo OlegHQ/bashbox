@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct ClearCommand;
 
@@ -10,7 +11,7 @@ impl Command for ClearCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(
                 "clear - clear the terminal screen\n\nUsage: clear [OPTIONS]\n\nOptions:\n    --help display this help and exit\n".to_string()
             );
@@ -24,9 +25,9 @@ impl Command for ClearCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
     fn create_ctx(args: Vec<&str>) -> CommandContext {
         CommandContext {
@@ -40,7 +41,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clear_outputs_ansi_sequence() {
         let cmd = ClearCommand;
         let result = cmd.execute(create_ctx(vec![])).await;
@@ -48,7 +49,7 @@ mod tests {
         assert_eq!(result.stdout, "\x1B[2J\x1B[H");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_clear_help() {
         let cmd = ClearCommand;
         let result = cmd.execute(create_ctx(vec!["--help"])).await;

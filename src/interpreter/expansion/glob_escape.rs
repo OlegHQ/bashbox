@@ -3,6 +3,7 @@
 //! Functions for handling glob patterns, escaping, and unescaping.
 
 use regex_lite::Regex;
+use std::path::Path;
 
 /// Check if a string contains glob patterns, including extglob when enabled.
 pub fn has_glob_pattern(value: &str, extglob: bool) -> bool {
@@ -79,6 +80,35 @@ pub fn escape_regex_chars(s: &str) -> String {
     result
 }
 
+/// Per-field pathname expansion for already-split words (e.g. after `$@` / `$*` IFS split).
+///
+/// When no virtual filesystem is in play, this matches [`crate::interpreter::word_expansion::expand_word_with_glob`]
+/// with `fs: None`: glob-active fields behave as if there were no matches (no host path scan).
+pub fn split_and_glob_expand(
+    words: &[String],
+    _cwd: &Path,
+    failglob: bool,
+    nullglob: bool,
+    noglob: bool,
+    extglob: bool,
+) -> Result<Vec<String>, String> {
+    let mut out = Vec::with_capacity(words.len());
+    for word in words {
+        if noglob || !has_glob_pattern(word, extglob) {
+            out.push(word.clone());
+            continue;
+        }
+        if failglob {
+            return Err(format!("no match: {word}"));
+        }
+        if nullglob {
+            continue;
+        }
+        out.push(unescape_glob_pattern(word));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +153,37 @@ mod tests {
         assert_eq!(escape_regex_chars("[a]"), r"\[a\]");
         assert_eq!(escape_regex_chars("^$"), r"\^\$");
         assert_eq!(escape_regex_chars("plain"), "plain");
+    }
+
+    #[test]
+    fn split_and_glob_expand_noglob_passthrough() {
+        let cwd = std::path::Path::new("/");
+        let words = vec!["*.txt".to_string(), "plain".to_string()];
+        let got = split_and_glob_expand(&words, cwd, false, false, true, false).unwrap();
+        assert_eq!(got, words);
+    }
+
+    #[test]
+    fn split_and_glob_expand_no_fs_failglob() {
+        let cwd = std::path::Path::new("/");
+        let words = vec!["*.nothing".to_string()];
+        let err = split_and_glob_expand(&words, cwd, true, false, false, false).unwrap_err();
+        assert_eq!(err, "no match: *.nothing");
+    }
+
+    #[test]
+    fn split_and_glob_expand_no_fs_nullglob() {
+        let cwd = std::path::Path::new("/");
+        let words = vec!["a".to_string(), "*.nothing".to_string()];
+        let got = split_and_glob_expand(&words, cwd, false, true, false, false).unwrap();
+        assert_eq!(got, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn split_and_glob_expand_no_fs_literal_fallback() {
+        let cwd = std::path::Path::new("/");
+        let words = vec![r"a\*b".to_string()];
+        let got = split_and_glob_expand(&words, cwd, false, false, false, false).unwrap();
+        assert_eq!(got, vec!["a*b".to_string()]);
     }
 }

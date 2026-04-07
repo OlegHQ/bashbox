@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use crate::commands::arg_helpers::invalid_option;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 use std::collections::HashSet;
 
 pub struct ReadlinkCommand;
@@ -30,10 +31,7 @@ impl Command for ReadlinkCommand {
                     "-f" | "--canonicalize" => canonicalize = true,
                     "--" => parsing_opts = false,
                     s if s.starts_with('-') => {
-                        return CommandResult::error(format!(
-                            "readlink: invalid option -- '{}'\n",
-                            &s[1..]
-                        ));
+                        return CommandResult::error(invalid_option("readlink", &s[1..]));
                     }
                     _ => {
                         parsing_opts = false;
@@ -96,11 +94,11 @@ impl Command for ReadlinkCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readlink_missing_operand() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {
@@ -118,7 +116,7 @@ mod tests {
         assert!(result.stderr.contains("missing operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_readlink_help() {
         let fs = Arc::new(InMemoryFs::new());
         let ctx = CommandContext {

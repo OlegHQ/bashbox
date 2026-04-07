@@ -7,7 +7,9 @@
 //! - "${ref+${!ref}}" - indirect in alternative value
 //! - "${!ref+${!ref}}" - indirect with inner alternative
 
-use crate::interpreter::expansion::{get_array_elements, get_variable, is_variable_set, get_variable_attributes, ArrayIndex};
+use crate::interpreter::expansion::{
+    get_array_elements, get_variable, get_variable_attributes, is_variable_set, ArrayIndex,
+};
 use crate::interpreter::helpers::get_ifs_separator;
 use crate::interpreter::InterpreterState;
 use regex_lite::Regex;
@@ -135,10 +137,7 @@ pub fn expand_indirect_array_slicing(
 
     let sliced_values: Vec<String> = if let Some(len) = length {
         if len < 0 {
-            return Some(Err(format!(
-                "{}[@]: substring expression < 0",
-                array_name
-            )));
+            return Some(Err(format!("{}[@]: substring expression < 0", array_name)));
         }
         elements
             .iter()
@@ -147,7 +146,11 @@ pub fn expand_indirect_array_slicing(
             .map(|(_, v)| v.clone())
             .collect()
     } else {
-        elements.iter().skip(start_idx).map(|(_, v)| v.clone()).collect()
+        elements
+            .iter()
+            .skip(start_idx)
+            .map(|(_, v)| v.clone())
+            .collect()
     };
 
     if sliced_values.is_empty() {
@@ -298,11 +301,7 @@ pub fn expand_indirect_positional(
     let ref_value = get_variable(state, ref_var_name);
 
     if ref_value == "@" || ref_value == "*" {
-        let num_params: i32 = state
-            .env
-            .get("#")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        let num_params: i32 = state.env.get("#").and_then(|s| s.parse().ok()).unwrap_or(0);
         let mut params = Vec::new();
         for i in 1..=num_params {
             params.push(state.env.get(&i.to_string()).cloned().unwrap_or_default());
@@ -388,36 +387,51 @@ pub fn check_indirect_in_alternative(
             if is_star {
                 // arr[*] - join with IFS into one word
                 let ifs_sep = get_ifs_separator(&state.env);
-                return Some((true, IndirectExpansionResult {
-                    values: vec![values.join(ifs_sep)],
-                    quoted: true,
-                }));
+                return Some((
+                    true,
+                    IndirectExpansionResult {
+                        values: vec![values.join(ifs_sep)],
+                        quoted: true,
+                    },
+                ));
             }
             // arr[@] - each element as a separate word (quoted)
-            return Some((true, IndirectExpansionResult {
-                values,
-                quoted: true,
-            }));
+            return Some((
+                true,
+                IndirectExpansionResult {
+                    values,
+                    quoted: true,
+                },
+            ));
         }
         // No array elements - check for scalar variable
         if let Some(scalar_value) = state.env.get(&array_name) {
-            return Some((true, IndirectExpansionResult {
-                values: vec![scalar_value.clone()],
-                quoted: true,
-            }));
+            return Some((
+                true,
+                IndirectExpansionResult {
+                    values: vec![scalar_value.clone()],
+                    quoted: true,
+                },
+            ));
         }
         // Variable is unset - return empty
-        return Some((true, IndirectExpansionResult {
-            values: vec![],
-            quoted: true,
-        }));
+        return Some((
+            true,
+            IndirectExpansionResult {
+                values: vec![],
+                quoted: true,
+            },
+        ));
     }
 
     // Don't expand the alternative - return empty
-    Some((false, IndirectExpansionResult {
-        values: vec![],
-        quoted: false,
-    }))
+    Some((
+        false,
+        IndirectExpansionResult {
+            values: vec![],
+            quoted: false,
+        },
+    ))
 }
 
 /// Handle ${!ref+${!ref}} or ${!ref-${!ref}} - indirect with inner alternative/default value.
@@ -469,36 +483,51 @@ pub fn check_indirection_with_inner_alternative(
             if is_star {
                 // arr[*] - join with IFS into one word
                 let ifs_sep = get_ifs_separator(&state.env);
-                return Some((true, IndirectExpansionResult {
-                    values: vec![values.join(ifs_sep)],
-                    quoted: true,
-                }));
+                return Some((
+                    true,
+                    IndirectExpansionResult {
+                        values: vec![values.join(ifs_sep)],
+                        quoted: true,
+                    },
+                ));
             }
             // arr[@] - each element as a separate word (quoted)
-            return Some((true, IndirectExpansionResult {
-                values,
-                quoted: true,
-            }));
+            return Some((
+                true,
+                IndirectExpansionResult {
+                    values,
+                    quoted: true,
+                },
+            ));
         }
         // No array elements - check for scalar variable
         if let Some(scalar_value) = state.env.get(&array_name) {
-            return Some((true, IndirectExpansionResult {
-                values: vec![scalar_value.clone()],
-                quoted: true,
-            }));
+            return Some((
+                true,
+                IndirectExpansionResult {
+                    values: vec![scalar_value.clone()],
+                    quoted: true,
+                },
+            ));
         }
         // Variable is unset - return empty
-        return Some((true, IndirectExpansionResult {
-            values: vec![],
-            quoted: true,
-        }));
+        return Some((
+            true,
+            IndirectExpansionResult {
+                values: vec![],
+                quoted: true,
+            },
+        ));
     }
 
     // Don't expand the alternative - fall through to return empty or the outer value
-    Some((false, IndirectExpansionResult {
-        values: vec![],
-        quoted: false,
-    }))
+    Some((
+        false,
+        IndirectExpansionResult {
+            values: vec![],
+            quoted: false,
+        },
+    ))
 }
 
 /// Handle indirect array with AssignDefault "${!ref:=default}".
@@ -682,7 +711,9 @@ mod tests {
     fn test_check_indirection_with_inner_alternative() {
         let mut state = make_state_with_array("arr", &["x", "y"]);
         state.env.insert("ref".to_string(), "arr[@]".to_string());
-        state.env.insert("outer".to_string(), "something".to_string());
+        state
+            .env
+            .insert("outer".to_string(), "something".to_string());
 
         // ${!outer+"${!ref}"} - outer is set, should expand
         let (should_expand, result) =

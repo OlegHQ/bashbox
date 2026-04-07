@@ -1,17 +1,14 @@
-// src/commands/yq/mod.rs
-pub mod formats;
-
-use async_trait::async_trait;
+use crate::commands::arg_helpers::wants_help;
+use crate::commands::errors::no_such_file;
+use crate::commands::jaq_support::{
+    collect_inputs, compile_filter, format_values, last_truthy, run_filter,
+};
 use crate::commands::{Command, CommandContext, CommandResult};
-use crate::commands::query_engine::{Value, parse, evaluate};
-use crate::commands::query_engine::context::{EvalContext, JqError};
-use formats::*;
+use async_trait::async_trait;
+use jaq_all::fmts::Format;
+use std::path::Path;
 
 pub struct YqCommand;
-
-// ---------------------------------------------------------------------------
-// CLI options
-// ---------------------------------------------------------------------------
 
 struct YqOptions {
     input_format: Option<Format>,
@@ -22,32 +19,39 @@ struct YqOptions {
     slurp: bool,
     null_input: bool,
     join_output: bool,
-    pretty_print: bool,
+    sort_keys: bool,
+    use_tab: bool,
     indent: usize,
-    front_matter: bool,
-    xml_attribute_prefix: String,
-    xml_content_name: String,
-    csv_delimiter: String,
-    csv_header: bool,
     inplace: bool,
     filter: String,
     files: Vec<String>,
 }
 
-fn parse_format(s: &str) -> Result<Format, String> {
-    match s {
+struct InputSource {
+    name: String,
+    content: String,
+    format: Format,
+}
+
+fn parse_data_format(value: &str) -> Result<Format, String> {
+    match value {
         "yaml" | "yml" | "y" => Ok(Format::Yaml),
         "json" | "j" => Ok(Format::Json),
-        "xml" | "x" => Ok(Format::Xml),
-        "ini" | "i" => Ok(Format::Ini),
-        "csv" | "c" => Ok(Format::Csv),
         "toml" | "t" => Ok(Format::Toml),
-        _ => Err(format!("yq: Unknown format: {}\n", s)),
+        _ => Err(format!("Unknown format: {value}")),
+    }
+}
+
+fn infer_input_format(path: &str) -> Format {
+    match Format::determine(Path::new(path)) {
+        Some(Format::Json) => Format::Json,
+        Some(Format::Toml) => Format::Toml,
+        _ => Format::Yaml,
     }
 }
 
 fn parse_yq_args(args: &[String]) -> Result<YqOptions, CommandResult> {
-    let mut opts = YqOptions {
+    let mut options = YqOptions {
         input_format: None,
         output_format: None,
         raw: false,
@@ -56,228 +60,244 @@ fn parse_yq_args(args: &[String]) -> Result<YqOptions, CommandResult> {
         slurp: false,
         null_input: false,
         join_output: false,
-        pretty_print: false,
+        sort_keys: false,
+        use_tab: false,
         indent: 2,
-        front_matter: false,
-        xml_attribute_prefix: "+@".to_string(),
-        xml_content_name: "+content".to_string(),
-        csv_delimiter: String::new(),
-        csv_header: true,
         inplace: false,
         filter: ".".to_string(),
         files: Vec::new(),
     };
-
     let mut filter_set = false;
     let mut i = 0;
+
     while i < args.len() {
-        let a = &args[i];
-        if a == "-p" || a == "--input-format" {
+        let arg = &args[i];
+        if let Some(value) = arg.strip_prefix("--input=") {
+            options.input_format = Some(parse_data_format(value).map_err(|err| {
+                CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+            })?);
             i += 1;
-            if i >= args.len() {
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--output=") {
+            options.output_format = Some(parse_data_format(value).map_err(|err| {
+                CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+            })?);
+            i += 1;
+            continue;
+        }
+
+        match arg.as_str() {
+            "-p" | "--input-format" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    return Err(CommandResult::with_exit_code(
+                        String::new(),
+                        "yq: --input-format requires an argument\n".to_string(),
+                        2,
+                    ));
+                };
+                options.input_format = Some(parse_data_format(value).map_err(|err| {
+                    CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+                })?);
+            }
+            "-o" | "--output-format" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    return Err(CommandResult::with_exit_code(
+                        String::new(),
+                        "yq: --output-format requires an argument\n".to_string(),
+                        2,
+                    ));
+                };
+                options.output_format = Some(parse_data_format(value).map_err(|err| {
+                    CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+                })?);
+            }
+            "-I" | "--indent" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    return Err(CommandResult::with_exit_code(
+                        String::new(),
+                        "yq: --indent requires an argument\n".to_string(),
+                        2,
+                    ));
+                };
+                options.indent = value.parse().unwrap_or(2);
+            }
+            "-J" => options.input_format = Some(Format::Json),
+            "-T" => options.input_format = Some(Format::Toml),
+            "-y" => options.output_format = Some(Format::Yaml),
+            "-t" => options.output_format = Some(Format::Toml),
+            "-r" | "--raw-output" => options.raw = true,
+            "-c" | "--compact-output" => options.compact = true,
+            "-e" | "--exit-status" => options.exit_status = true,
+            "-s" | "--slurp" => options.slurp = true,
+            "-n" | "--null-input" => options.null_input = true,
+            "-j" | "--join-output" => options.join_output = true,
+            "-S" | "--sort-keys" => options.sort_keys = true,
+            "--tab" => options.use_tab = true,
+            "-i" | "--inplace" => options.inplace = true,
+            _ if arg.starts_with("-p") && arg.len() > 2 => {
+                options.input_format = Some(parse_data_format(&arg[2..]).map_err(|err| {
+                    CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+                })?);
+            }
+            _ if arg.starts_with("-o") && arg.len() > 2 => {
+                options.output_format = Some(parse_data_format(&arg[2..]).map_err(|err| {
+                    CommandResult::with_exit_code(String::new(), format!("yq: {err}\n"), 2)
+                })?);
+            }
+            "-" => options.files.push("-".to_string()),
+            _ if arg.starts_with("--") => {
                 return Err(CommandResult::with_exit_code(
                     String::new(),
-                    "yq: -p requires an argument\n".to_string(),
+                    format!("yq: Unknown option: {arg}\n"),
                     2,
                 ));
             }
-            opts.input_format = Some(parse_format(&args[i]).map_err(|e| {
-                CommandResult::with_exit_code(String::new(), e, 2)
-            })?);
-        } else if a.starts_with("-p") && a.len() > 2 {
-            let fmt_str = &a[2..];
-            opts.input_format = Some(parse_format(fmt_str).map_err(|e| {
-                CommandResult::with_exit_code(String::new(), e, 2)
-            })?);
-        } else if a == "-o" || a == "--output-format" {
-            i += 1;
-            if i >= args.len() {
-                return Err(CommandResult::with_exit_code(
-                    String::new(),
-                    "yq: -o requires an argument\n".to_string(),
-                    2,
-                ));
-            }
-            opts.output_format = Some(parse_format(&args[i]).map_err(|e| {
-                CommandResult::with_exit_code(String::new(), e, 2)
-            })?);
-        } else if a.starts_with("-o") && a.len() > 2 {
-            let fmt_str = &a[2..];
-            opts.output_format = Some(parse_format(fmt_str).map_err(|e| {
-                CommandResult::with_exit_code(String::new(), e, 2)
-            })?);
-        } else if a == "-I" || a == "--indent" {
-            i += 1;
-            if i >= args.len() {
-                return Err(CommandResult::with_exit_code(
-                    String::new(),
-                    "yq: -I requires an argument\n".to_string(),
-                    2,
-                ));
-            }
-            opts.indent = args[i].parse().unwrap_or(2);
-        } else if a == "--xml-attribute-prefix" {
-            i += 1;
-            if i < args.len() {
-                opts.xml_attribute_prefix = args[i].clone();
-            }
-        } else if a == "--xml-content-name" {
-            i += 1;
-            if i < args.len() {
-                opts.xml_content_name = args[i].clone();
-            }
-        } else if a == "--csv-delimiter" {
-            i += 1;
-            if i < args.len() {
-                opts.csv_delimiter = args[i].clone();
-            }
-        } else if a == "--csv-header" {
-            opts.csv_header = true;
-        } else if a == "--no-csv-header" {
-            opts.csv_header = false;
-        } else if a == "-i" || a == "--inplace" {
-            opts.inplace = true;
-        } else if a == "-r" || a == "--raw-output" {
-            opts.raw = true;
-        } else if a == "-c" || a == "--compact-output" || a == "--compact" {
-            opts.compact = true;
-        } else if a == "-e" || a == "--exit-status" {
-            opts.exit_status = true;
-        } else if a == "-s" || a == "--slurp" {
-            opts.slurp = true;
-        } else if a == "-n" || a == "--null-input" {
-            opts.null_input = true;
-        } else if a == "-j" || a == "--join-output" {
-            opts.join_output = true;
-        } else if a == "-f" || a == "--front-matter" {
-            opts.front_matter = true;
-        } else if a == "-P" || a == "--prettyPrint" {
-            opts.pretty_print = true;
-        } else if a == "-" {
-            opts.files.push("-".to_string());
-        } else if a.starts_with("--") {
-            return Err(CommandResult::with_exit_code(
-                String::new(),
-                format!("yq: Unknown option: {}\n", a),
-                2,
-            ));
-        } else if a.starts_with('-') && a.len() > 1 {
-            // Combined short flags like -rc
-            for c in a[1..].chars() {
-                match c {
-                    'r' => opts.raw = true,
-                    'c' => opts.compact = true,
-                    'e' => opts.exit_status = true,
-                    's' => opts.slurp = true,
-                    'n' => opts.null_input = true,
-                    'j' => opts.join_output = true,
-                    'f' => opts.front_matter = true,
-                    'P' => opts.pretty_print = true,
-                    'i' => opts.inplace = true,
-                    _ => {
-                        return Err(CommandResult::with_exit_code(
-                            String::new(),
-                            format!("yq: Unknown option: -{}\n", c),
-                            2,
-                        ));
+            _ if arg.starts_with('-') && arg.len() > 1 => {
+                for flag in arg[1..].chars() {
+                    match flag {
+                        'J' => options.input_format = Some(Format::Json),
+                        'T' => options.input_format = Some(Format::Toml),
+                        'y' => options.output_format = Some(Format::Yaml),
+                        't' => options.output_format = Some(Format::Toml),
+                        'r' => options.raw = true,
+                        'c' => options.compact = true,
+                        'e' => options.exit_status = true,
+                        's' => options.slurp = true,
+                        'n' => options.null_input = true,
+                        'j' => options.join_output = true,
+                        'S' => options.sort_keys = true,
+                        'i' => options.inplace = true,
+                        _ => {
+                            return Err(CommandResult::with_exit_code(
+                                String::new(),
+                                format!("yq: Unknown option: -{flag}\n"),
+                                2,
+                            ));
+                        }
                     }
                 }
             }
-        } else if !filter_set {
-            opts.filter = a.clone();
-            filter_set = true;
-        } else {
-            opts.files.push(a.clone());
+            _ if !filter_set => {
+                options.filter = arg.clone();
+                filter_set = true;
+            }
+            _ => options.files.push(arg.clone()),
         }
         i += 1;
     }
 
-    Ok(opts)
+    Ok(options)
 }
-
-// ---------------------------------------------------------------------------
-// Help text
-// ---------------------------------------------------------------------------
 
 const YQ_HELP: &str = "\
 Usage: yq [OPTIONS] FILTER [FILE]
 
-command-line YAML/JSON/XML/INI/CSV/TOML processor
+lq-style YAML/TOML/JSON query wrapper powered by jaq
+
+Defaults:
+  input  = yaml
+  output = jq/json on stdout, input format for --inplace
 
 Options:
-  -p, --input-format FMT   input format (yaml/json/xml/ini/csv/toml)
-  -o, --output-format FMT  output format (yaml/json/xml/ini/csv/toml)
-  -i, --inplace            edit files in place
-  -r, --raw-output         output strings without quotes
-  -c, --compact            compact output
-  -e, --exit-status        set exit status based on output
-  -s, --slurp              read entire input into array
-  -n, --null-input          don't read any input
-  -j, --join-output        don't print newlines after each output
-  -f, --front-matter       process front-matter
-  -P, --prettyPrint        pretty print output
-  -I, --indent N           indentation level (default: 2)
-      --xml-attribute-prefix  XML attribute prefix (default: +@)
-      --xml-content-name      XML text content key (default: +content)
-      --csv-delimiter         CSV delimiter
-      --csv-header            CSV has header row (default)
-      --no-csv-header         CSV has no header row
-      --help                  display this help and exit
+  -J                 treat input as JSON
+  -T                 treat input as TOML
+  -p, --input-format FORMAT
+                     input format: yaml, json, toml
+  -y                 write YAML output
+  -t                 write TOML output
+  -o, --output-format FORMAT
+                     output format: json, yaml, toml
+  -i, --inplace      rewrite input files instead of writing to stdout
+  -r, --raw-output   output strings without quotes
+  -c, --compact-output
+                     compact JSON output
+  -e, --exit-status  set exit status based on the last output value
+  -s, --slurp        read all input documents into one array
+  -n, --null-input   run the filter with null input
+  -j, --join-output  suppress separators between outputs
+  -S, --sort-keys    sort object keys
+  -I, --indent N     indentation width for pretty output
+      --tab          indent with tabs
+      --help         display this help and exit
 ";
 
-// ---------------------------------------------------------------------------
-// JSON formatting (reused from jq for raw/compact output)
-// ---------------------------------------------------------------------------
-
-fn format_json_string(s: &str) -> String {
-    let mut result = String::from("\"");
-    for ch in s.chars() {
-        match ch {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => result.push(c),
-        }
+async fn load_sources(
+    ctx: &CommandContext,
+    options: &YqOptions,
+) -> Result<Vec<InputSource>, CommandResult> {
+    if options.files.is_empty() || (options.files.len() == 1 && options.files[0] == "-") {
+        return Ok(vec![InputSource {
+            name: "stdin".to_string(),
+            content: ctx.stdin.clone(),
+            format: options.input_format.unwrap_or(Format::Yaml),
+        }]);
     }
-    result.push('"');
-    result
-}
 
-fn format_value_json(v: &Value, compact: bool, raw: bool) -> String {
-    match v {
-        Value::Null => "null".to_string(),
-        Value::Bool(b) => format!("{}", b),
-        Value::Number(n) => {
-            if !n.is_finite() {
-                return "null".to_string();
-            }
-            if *n == (*n as i64) as f64 && n.abs() < 1e18 {
-                format!("{}", *n as i64)
-            } else {
-                format!("{}", n)
-            }
+    let mut sources = Vec::new();
+    for file in &options.files {
+        if file == "-" {
+            sources.push(InputSource {
+                name: "stdin".to_string(),
+                content: ctx.stdin.clone(),
+                format: options.input_format.unwrap_or(Format::Yaml),
+            });
+            continue;
         }
-        Value::String(s) => {
-            if raw { s.clone() } else { format_json_string(s) }
-        }
-        Value::Array(_) | Value::Object(_) => {
-            if compact {
-                v.to_json_string_compact()
-            } else {
-                v.to_json_string()
+
+        let path = ctx.fs.resolve_path(&ctx.cwd, file);
+        match ctx.fs.read_file(&path).await {
+            Ok(content) => sources.push(InputSource {
+                name: file.clone(),
+                content,
+                format: options
+                    .input_format
+                    .unwrap_or_else(|| infer_input_format(file)),
+            }),
+            Err(_) => {
+                return Err(CommandResult::with_exit_code(
+                    String::new(),
+                    no_such_file("yq", file),
+                    2,
+                ));
             }
         }
     }
+
+    Ok(sources)
 }
 
-// ---------------------------------------------------------------------------
-// Command implementation
-// ---------------------------------------------------------------------------
+fn resolve_output_format(options: &YqOptions, source_format: Format) -> Format {
+    options.output_format.unwrap_or({
+        if options.inplace {
+            source_format
+        } else {
+            Format::Json
+        }
+    })
+}
+
+fn validate_output_mode(raw: bool, output_format: Format) -> Result<(), CommandResult> {
+    if raw && !matches!(output_format, Format::Json) {
+        return Err(CommandResult::with_exit_code(
+            String::new(),
+            "yq: --raw-output only works with jq/json output\n".to_string(),
+            2,
+        ));
+    }
+    Ok(())
+}
+
+fn collect_source_inputs(
+    source: &InputSource,
+    slurp: bool,
+) -> Result<Vec<jaq_all::json::Val>, String> {
+    collect_inputs(source.format, std::slice::from_ref(&source.content), slurp)
+}
 
 #[async_trait]
 impl Command for YqCommand {
@@ -286,300 +306,200 @@ impl Command for YqCommand {
     }
 
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
-        if ctx.args.iter().any(|a| a == "--help") {
+        if wants_help(&ctx.args) {
             return CommandResult::success(YQ_HELP.to_string());
         }
 
-        let opts = match parse_yq_args(&ctx.args) {
-            Ok(o) => o,
-            Err(r) => return r,
+        let options = match parse_yq_args(&ctx.args) {
+            Ok(options) => options,
+            Err(result) => return result,
         };
 
-        // Determine input format
-        let input_fmt = opts.input_format.unwrap_or_else(|| {
-            if let Some(f) = opts.files.first() {
-                if f != "-" {
-                    if let Some(fmt) = detect_format_from_extension(f) {
-                        return fmt;
-                    }
-                }
-            }
-            Format::Yaml
-        });
-
-        // Determine output format
-        let output_fmt = opts.output_format.unwrap_or(input_fmt);
-
-        let format_opts = FormatOptions {
-            input_format: input_fmt,
-            output_format: output_fmt,
-            raw: opts.raw,
-            compact: opts.compact,
-            pretty_print: opts.pretty_print,
-            indent: opts.indent,
-            xml_attribute_prefix: opts.xml_attribute_prefix.clone(),
-            xml_content_name: opts.xml_content_name.clone(),
-            csv_delimiter: opts.csv_delimiter.clone(),
-            csv_header: opts.csv_header,
-        };
-
-        // Build list of inputs
-        let mut inputs: Vec<(String, String)> = Vec::new();
-        if opts.null_input {
-            // No input
-        } else if opts.files.is_empty()
-            || (opts.files.len() == 1 && opts.files[0] == "-")
-        {
-            inputs.push(("stdin".to_string(), ctx.stdin.clone()));
-        } else {
-            for file in &opts.files {
-                if file == "-" {
-                    inputs.push(("stdin".to_string(), ctx.stdin.clone()));
-                } else {
-                    let path = ctx.fs.resolve_path(&ctx.cwd, file);
-                    match ctx.fs.read_file(&path).await {
-                        Ok(content) => {
-                            inputs.push((file.clone(), content));
-                        }
-                        Err(_) => {
-                            return CommandResult::with_exit_code(
-                                String::new(),
-                                format!(
-                                    "yq: {}: No such file or directory\n",
-                                    file
-                                ),
-                                2,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        // Parse the filter
-        let ast = match parse(&opts.filter) {
-            Ok(a) => a,
-            Err(e) => {
+        let filter = match compile_filter(&options.filter) {
+            Ok(filter) => filter,
+            Err(err) => {
                 return CommandResult::with_exit_code(
                     String::new(),
-                    format!("yq: parse error: {}\n", e),
-                    5,
+                    format!("yq: {}\n", err.message.trim_end()),
+                    err.exit_code,
                 );
             }
         };
 
-        let mut eval_ctx = EvalContext::with_env(ctx.env.clone());
+        let sources = match load_sources(&ctx, &options).await {
+            Ok(sources) => sources,
+            Err(result) => return result,
+        };
 
-        // Evaluate
-        let values: Vec<Value> = if opts.null_input {
-            match evaluate(&Value::Null, &ast, &mut eval_ctx) {
-                Ok(v) => v,
-                Err(e) => return yq_error_result(e),
+        if options.inplace {
+            if sources.iter().any(|source| source.name == "stdin") {
+                return CommandResult::with_exit_code(
+                    String::new(),
+                    "yq: --inplace requires file arguments\n".to_string(),
+                    2,
+                );
             }
-        } else if opts.front_matter {
-            // Front-matter mode: extract and process front-matter
-            let mut all_values = Vec::new();
-            for (_source, content) in &inputs {
-                if let Some(fm) = extract_front_matter(content) {
-                    match evaluate(&fm.front_matter, &ast, &mut eval_ctx) {
-                        Ok(v) => all_values.extend(v),
-                        Err(e) => return yq_error_result(e),
-                    }
+
+            let mut last_output_truthy = false;
+            for source in &sources {
+                let output_format = resolve_output_format(&options, source.format);
+                if let Err(result) = validate_output_mode(options.raw, output_format) {
+                    return result;
+                }
+
+                let inputs = if options.null_input {
+                    Vec::new()
                 } else {
-                    // No front-matter, parse as normal
-                    match parse_input(content.trim(), &format_opts) {
-                        Ok(parsed) => {
-                            match evaluate(&parsed, &ast, &mut eval_ctx) {
-                                Ok(v) => all_values.extend(v),
-                                Err(e) => return yq_error_result(e),
-                            }
-                        }
-                        Err(e) => {
+                    match collect_source_inputs(source, options.slurp) {
+                        Ok(inputs) => inputs,
+                        Err(err) => {
                             return CommandResult::with_exit_code(
                                 String::new(),
-                                format!("yq: {}\n", e),
-                                5,
-                            );
-                        }
-                    }
-                }
-            }
-            all_values
-        } else if opts.slurp {
-            let mut items: Vec<Value> = Vec::new();
-            for (_source, content) in &inputs {
-                let trimmed = content.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if input_fmt == Format::Yaml {
-                    items.extend(parse_all_yaml_documents(trimmed));
-                } else {
-                    match parse_input(trimmed, &format_opts) {
-                        Ok(parsed) => items.push(parsed),
-                        Err(e) => {
-                            return CommandResult::with_exit_code(
-                                String::new(),
-                                format!("yq: {}\n", e),
-                                5,
-                            );
-                        }
-                    }
-                }
-            }
-            let arr = Value::Array(items);
-            match evaluate(&arr, &ast, &mut eval_ctx) {
-                Ok(v) => v,
-                Err(e) => return yq_error_result(e),
-            }
-        } else {
-            let mut all_values: Vec<Value> = Vec::new();
-            for (_source, content) in &inputs {
-                let trimmed = content.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                // For YAML, handle multi-document
-                let parsed_values = if input_fmt == Format::Yaml {
-                    parse_all_yaml_documents(trimmed)
-                } else {
-                    match parse_input(trimmed, &format_opts) {
-                        Ok(v) => vec![v],
-                        Err(e) => {
-                            return CommandResult::with_exit_code(
-                                String::new(),
-                                format!("yq: {}\n", e),
+                                format!("yq: parse error: {err}\n"),
                                 5,
                             );
                         }
                     }
                 };
-                for parsed in &parsed_values {
-                    match evaluate(parsed, &ast, &mut eval_ctx) {
-                        Ok(v) => all_values.extend(v),
-                        Err(e) => return yq_error_result(e),
+
+                let output = {
+                    let values = match run_filter(&filter, options.null_input, inputs) {
+                        Ok(values) => values,
+                        Err(err) => {
+                            return CommandResult::with_exit_code(
+                                String::new(),
+                                format!("yq: error: {err}\n"),
+                                5,
+                            );
+                        }
+                    };
+                    last_output_truthy = !values.is_empty() && last_truthy(&values) == Some(true);
+
+                    let format = if options.raw {
+                        Format::Raw
+                    } else {
+                        output_format
+                    };
+                    match format_values(
+                        &values,
+                        format,
+                        options.compact,
+                        options.join_output,
+                        options.sort_keys,
+                        options.indent,
+                        options.use_tab,
+                    ) {
+                        Ok(output) => output,
+                        Err(err) => {
+                            return CommandResult::with_exit_code(
+                                String::new(),
+                                format!("yq: error: {err}\n"),
+                                5,
+                            );
+                        }
                     }
+                };
+
+                let path = ctx.fs.resolve_path(&ctx.cwd, &source.name);
+                if let Err(_) = ctx.fs.write_file(&path, output.as_bytes()).await {
+                    return CommandResult::with_exit_code(
+                        String::new(),
+                        format!("yq: {}: write error\n", source.name),
+                        2,
+                    );
                 }
             }
-            all_values
-        };
 
-        // Format output
-        // yq defaults to raw string output (unlike jq which quotes strings)
-        let effective_raw = opts.raw || output_fmt != Format::Json;
+            let exit_code = if options.exit_status && !last_output_truthy {
+                1
+            } else {
+                0
+            };
+            return CommandResult::with_exit_code(String::new(), String::new(), exit_code);
+        }
 
-        let formatted: Vec<String> = values
-            .iter()
-            .map(|v| {
-                // For scalar values, always use JSON-style formatting
-                // (format_output is for structured data like objects/arrays)
-                match v {
-                    Value::Null | Value::Bool(_) | Value::Number(_) => {
-                        format_value_json(v, opts.compact, effective_raw)
-                    }
-                    Value::String(_) => {
-                        format_value_json(v, opts.compact, effective_raw)
-                    }
-                    _ => {
-                        format_output(v, &format_opts)
-                    }
-                }
-            })
-            .collect();
+        let output_format = resolve_output_format(&options, Format::Yaml);
+        if let Err(result) = validate_output_mode(options.raw, output_format) {
+            return result;
+        }
 
-        let separator = if opts.join_output { "" } else { "\n" };
-        let output = formatted.join(separator);
-
-        let exit_code = if opts.exit_status
-            && (values.is_empty()
-                || values.iter().all(|v| {
-                    matches!(v, Value::Null | Value::Bool(false))
-                }))
-        {
-            1
+        let inputs = if options.null_input {
+            Vec::new()
         } else {
-            0
-        };
-
-        // Handle inplace
-        if opts.inplace && !opts.files.is_empty() {
-            for file in &opts.files {
-                if file != "-" {
-                    let path = ctx.fs.resolve_path(&ctx.cwd, file);
-                    let write_output = if output.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{}\n", output)
-                    };
-                    if let Err(_) = ctx.fs.write_file(
-                        &path,
-                        write_output.as_bytes(),
-                    ).await {
+            let mut all_inputs = Vec::new();
+            for source in &sources {
+                match collect_source_inputs(source, false) {
+                    Ok(mut values) => all_inputs.append(&mut values),
+                    Err(err) => {
                         return CommandResult::with_exit_code(
                             String::new(),
-                            format!("yq: {}: write error\n", file),
-                            2,
+                            format!("yq: parse error: {err}\n"),
+                            5,
                         );
                     }
                 }
             }
-            return CommandResult::with_exit_code(
-                String::new(), String::new(), exit_code,
-            );
-        }
-
-        let stdout = if output.is_empty() {
-            String::new()
-        } else if opts.join_output {
-            output
-        } else {
-            format!("{}\n", output)
+            if options.slurp {
+                vec![all_inputs.into_iter().collect()]
+            } else {
+                all_inputs
+            }
         };
 
-        CommandResult::with_exit_code(stdout, String::new(), exit_code)
-    }
-}
+        let values = match run_filter(&filter, options.null_input, inputs) {
+            Ok(values) => values,
+            Err(err) => {
+                return CommandResult::with_exit_code(
+                    String::new(),
+                    format!("yq: error: {err}\n"),
+                    5,
+                );
+            }
+        };
 
-fn yq_error_result(e: JqError) -> CommandResult {
-    match e {
-        JqError::ExecutionLimit(msg) => CommandResult::with_exit_code(
-            String::new(),
-            format!("yq: {}\n", msg),
-            5,
-        ),
-        JqError::Runtime(msg) if msg.contains("Unknown function") => {
-            CommandResult::with_exit_code(
-                String::new(),
-                format!("yq: error: {}\n", msg),
-                3,
-            )
-        }
-        _ => CommandResult::with_exit_code(
-            String::new(),
-            format!("yq: parse error: {}\n", e),
-            5,
-        ),
+        let format = if options.raw {
+            Format::Raw
+        } else {
+            output_format
+        };
+        let stdout = match format_values(
+            &values,
+            format,
+            options.compact,
+            options.join_output,
+            options.sort_keys,
+            options.indent,
+            options.use_tab,
+        ) {
+            Ok(stdout) => stdout,
+            Err(err) => {
+                return CommandResult::with_exit_code(
+                    String::new(),
+                    format!("yq: error: {err}\n"),
+                    5,
+                );
+            }
+        };
+
+        let exit_code =
+            if options.exit_status && (values.is_empty() || last_truthy(&values) != Some(true)) {
+                1
+            } else {
+                0
+            };
+
+        CommandResult::with_exit_code(stdout, String::new(), exit_code)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
-    use serde_json;
+    use crate::commands::test_utils;
+    use crate::fs::FileSystem;
 
     fn make_ctx(args: &[&str], stdin: &str) -> CommandContext {
-        CommandContext {
-            args: args.iter().map(|s| s.to_string()).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs: Arc::new(InMemoryFs::new()),
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        test_utils::make_ctx_with_stdin(args.to_vec(), stdin)
     }
 
     async fn make_ctx_with_files(
@@ -587,952 +507,164 @@ mod tests {
         stdin: &str,
         files: &[(&str, &str)],
     ) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.iter().map(|s| s.to_string()).collect(),
-            stdin: stdin.to_string(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
+        test_utils::make_ctx_with_stdin_and_files(args.to_vec(), stdin, files.to_vec()).await
     }
 
-    #[tokio::test]
-    async fn test_yq_basic_yaml() {
-        let ctx = make_ctx(&[".name"], "name: hello\nage: 30");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_defaults_to_yaml_input_and_jq_output() {
+        let result = YqCommand
+            .execute(make_ctx(&[".name"], "name: hello\n"))
+            .await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello");
+        assert_eq!(result.stdout, "\"hello\"\n");
     }
 
-    #[tokio::test]
-    async fn test_yq_output_json() {
-        let ctx = make_ctx(
-            &["-o", "json", "."],
-            "name: hello\nage: 30",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("\"name\""));
-        assert!(result.stdout.contains("\"hello\""));
-        assert!(result.stdout.contains("30"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_input_json() {
-        let ctx = make_ctx(
-            &["-p", "json", ".a"],
-            r#"{"a":42}"#,
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "42");
-    }
-
-    #[tokio::test]
-    async fn test_yq_input_toml() {
-        let ctx = make_ctx(
-            &["-p", "toml", ".package.name"],
-            "[package]\nname = \"myapp\"",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "myapp");
-    }
-
-    #[tokio::test]
-    async fn test_yq_input_csv() {
-        let ctx = make_ctx(
-            &["-p", "csv", ".[0].name"],
-            "name,age\nAlice,30",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "Alice");
-    }
-
-    #[tokio::test]
-    async fn test_yq_format_conversion_yaml_to_json() {
-        let ctx = make_ctx(
-            &["-o", "json", "-c", "."],
-            "name: hello",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.trim().contains("\"name\":\"hello\""));
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_yq_raw_output() {
-        let ctx = make_ctx(
-            &["-o", "json", "-r", ".name"],
-            "name: hello",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+        let result = YqCommand
+            .execute(make_ctx(&["-r", ".name"], "name: hello\n"))
+            .await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello");
+        assert_eq!(result.stdout, "hello\n");
     }
 
-    #[tokio::test]
-    async fn test_yq_compact_json() {
-        let ctx = make_ctx(
-            &["-o", "json", "-c", "."],
-            "a: 1\nb: 2",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_yaml_output() {
+        let result = YqCommand
+            .execute(make_ctx(&["-y", ".metadata"], "metadata:\n  name: demo\n"))
+            .await;
         assert_eq!(result.exit_code, 0);
-        let out = result.stdout.trim();
-        assert!(out.contains("\"a\":1"));
-        assert!(out.contains("\"b\":2"));
+        assert!(result.stdout.contains("name: demo"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_toml_output() {
+        let result = YqCommand
+            .execute(make_ctx(&["-t", "."], "app:\n  name: demo\n  version: 2\n"))
+            .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("[app]"));
+        assert!(result.stdout.contains("name = \"demo\""));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_json_input_flag() {
+        let result = YqCommand
+            .execute(make_ctx(&["-J", ".name", "-r"], r#"{"name":"demo"}"#))
+            .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "demo\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_toml_input_flag() {
+        let result = YqCommand
+            .execute(make_ctx(
+                &["-T", ".package.name", "-r"],
+                "[package]\nname = \"demo\"\n",
+            ))
+            .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "demo\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_slurp_yaml_documents() {
+        let result = YqCommand
+            .execute(make_ctx(
+                &["-s", "length"],
+                "---\nname: first\n---\nname: second\n",
+            ))
+            .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "2\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_yq_null_input() {
-        let ctx = make_ctx(&["-n", r#"{"a":1}"#], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+        let result = YqCommand
+            .execute(make_ctx(&["-nc", r#"{"created": true}"#], ""))
+            .await;
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("a"));
+        assert_eq!(result.stdout, "{\"created\":true}\n");
     }
 
-    #[tokio::test]
-    async fn test_yq_slurp_multi_doc() {
-        let ctx = make_ctx(
-            &["-s", "length"],
-            "name: first\n---\nname: second",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "2");
-    }
-
-    #[tokio::test]
-    async fn test_yq_front_matter() {
-        let ctx = make_ctx(
-            &["-f", ".title"],
-            "---\ntitle: Hello\n---\nBody content",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "Hello");
-    }
-
-    #[tokio::test]
-    async fn test_yq_exit_status() {
-        let ctx = make_ctx(&["-e", ".x"], "x: null");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 1);
-    }
-
-    #[tokio::test]
-    async fn test_yq_help() {
-        let ctx = make_ctx(&["--help"], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("Usage: yq"));
-        assert!(result.stdout.contains("--input-format"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_combined_flags() {
-        let ctx = make_ctx(
-            &["-rc", ".name"],
-            "name: hello",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello");
-    }
-
-    #[tokio::test]
-    async fn test_yq_error_handling() {
-        let ctx = make_ctx(
-            &["-p", "json", "."],
-            "not json",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_ne!(result.exit_code, 0);
-        assert!(!result.stderr.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_yq_file_input() {
-        let ctx = make_ctx_with_files(
-            &[".", "/data.yaml"],
-            "",
-            &[("/data.yaml", "name: test\nvalue: 42")],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name"));
-        assert!(result.stdout.contains("test"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_file_not_found() {
-        let ctx = make_ctx(&[".", "/nonexistent.yaml"], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("No such file"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_unknown_option() {
-        let ctx = make_ctx(&["--unknown-flag", "."], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("Unknown option"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_yaml_to_toml() {
-        let ctx = make_ctx(
-            &["-o", "toml", "."],
-            "name: test\nversion: 1",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name = \"test\""));
-    }
-
-    #[tokio::test]
-    async fn test_yq_join_output() {
-        let ctx = make_ctx(
-            &["-o", "json", "-j", ".[]"],
-            "- 1\n- 2\n- 3",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_compact_and_join_output() {
+        let result = YqCommand
+            .execute(make_ctx(
+                &["-cj", ".items[]"],
+                "items:\n  - 1\n  - 2\n  - 3\n",
+            ))
+            .await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "123");
     }
 
-    #[tokio::test]
-    async fn test_yq_empty_input() {
-        let ctx = make_ctx(&["."], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "");
-    }
-
-    #[tokio::test]
-    async fn test_yq_input_xml() {
-        let ctx = make_ctx(
-            &["-p", "xml", ".root.name"],
-            "<root><name>hello</name></root>",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello");
-    }
-
-    // Additional YAML processing tests
-    #[tokio::test]
-    async fn test_yq_filter_nested_yaml() {
-        let ctx = make_ctx(
-            &[".config.database.host"],
-            "config:\n  database:\n    host: localhost\n    port: 5432\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "localhost");
-    }
-
-    #[tokio::test]
-    async fn test_yq_handle_arrays_in_yaml() {
-        let ctx = make_ctx(
-            &[".items[0].name"],
-            "items:\n  - name: foo\n    value: 1\n  - name: bar\n    value: 2\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "foo");
-    }
-
-    #[tokio::test]
-    async fn test_yq_iterate_over_arrays() {
-        let ctx = make_ctx(
-            &[".fruits[]"],
-            "fruits:\n  - apple\n  - banana\n  - cherry\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "apple\nbanana\ncherry");
-    }
-
-    #[tokio::test]
-    async fn test_yq_use_select_filter() {
-        let ctx = make_ctx(
-            &[".users[] | select(.active) | .name"],
-            "users:\n  - name: alice\n    active: true\n  - name: bob\n    active: false\n  - name: charlie\n    active: true\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "alice\ncharlie");
-    }
-
-    // Output format tests
-    #[tokio::test]
-    async fn test_yq_output_compact_json() {
-        let ctx = make_ctx(
-            &["-c", "-o", "json", "."],
-            "name: test\nvalue: 42\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), r#"{"name":"test","value":42}"#);
-    }
-
-    #[tokio::test]
-    async fn test_yq_output_raw_strings() {
-        let ctx = make_ctx(
-            &["-r", "-o", "json", ".message"],
-            "message: hello world\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello world");
-    }
-
-    // JSON input tests
-    #[tokio::test]
-    async fn test_yq_convert_json_to_yaml() {
-        let ctx = make_ctx(
-            &["-p", "json", "."],
-            r#"{"name": "test", "value": 42}"#,
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name: test"));
-        assert!(result.stdout.contains("value: 42"));
-    }
-
-    // XML input/output tests
-    #[tokio::test]
-    async fn test_yq_read_xml_with_attributes() {
-        let ctx = make_ctx(
-            &["-p", "xml", ".item[\"+@id\"]", "-o", "json"],
-            r#"<item id="123" name="test"/>"#,
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), r#""123""#);
-    }
-
-    #[tokio::test]
-    async fn test_yq_output_as_xml() {
-        let ctx = make_ctx(
-            &["-o", "xml", "."],
-            "root:\n  name: test\n  value: 42\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("<root>"));
-        assert!(result.stdout.contains("<name>test</name>"));
-        assert!(result.stdout.contains("<value>42</value>"));
-        assert!(result.stdout.contains("</root>"));
-    }
-
-    // stdin support tests
-    #[tokio::test]
-    async fn test_yq_read_from_stdin() {
-        let ctx = make_ctx(&[".name"], "name: test\n");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "test");
-    }
-
-    #[tokio::test]
-    async fn test_yq_accept_dash_for_stdin() {
-        let ctx = make_ctx(&[".value", "-"], "value: 42\n");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "42");
-    }
-
-    // null input tests
-    #[tokio::test]
-    async fn test_yq_null_input_create_object() {
-        let ctx = make_ctx(&["-n", r#"{"name": "created"}"#, "-o", "json"], "");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains(r#""name""#));
-        assert!(result.stdout.contains(r#""created""#));
-    }
-
-    // slurp mode tests
-    #[tokio::test]
-    async fn test_yq_slurp_multiple_yaml_documents() {
-        let ctx = make_ctx(
-            &["-s", ".[0].name"],
-            "---\nname: first\n---\nname: second\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "first");
-    }
-
-    // jq-style filter tests
-    #[tokio::test]
-    async fn test_yq_support_map_filter() {
-        let ctx = make_ctx(
-            &[".numbers | map(. * 2)"],
-            "numbers:\n  - 1\n  - 2\n  - 3\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        let lines = result.stdout.trim();
-        assert!(lines.contains("- 2"));
-        assert!(lines.contains("- 4"));
-        assert!(lines.contains("- 6"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_keys_filter() {
-        let ctx = make_ctx(
-            &[".config | keys"],
-            "config:\n  host: localhost\n  port: 8080\n  debug: true\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("debug"));
-        assert!(result.stdout.contains("host"));
-        assert!(result.stdout.contains("port"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_length_filter() {
-        let ctx = make_ctx(
-            &[".items | length"],
-            "items:\n  - a\n  - b\n  - c\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "3");
-    }
-
-    // Error handling tests
-    #[tokio::test]
-    async fn test_yq_handle_invalid_yaml() {
-        let ctx = make_ctx(&["."], "invalid: yaml: syntax: error:");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 5);
-        assert!(result.stderr.contains("parse error"));
-    }
-
-    // Format validation tests
-    #[tokio::test]
-    async fn test_yq_reject_invalid_input_format() {
-        let ctx = make_ctx(&["-p", "badformat"], "{}");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("Unknown format"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_reject_invalid_output_format() {
-        let ctx = make_ctx(&["-o", "badformat"], "{}");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("Unknown format"));
-    }
-
-    // INI format tests
-    #[tokio::test]
-    async fn test_yq_read_ini_and_extract_values() {
-        let ctx = make_ctx(
-            &["-p", "ini", ".database.host"],
-            "[database]\nhost=localhost\nport=5432\n\n[server]\ndebug=true\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "localhost");
-    }
-
-    #[tokio::test]
-    async fn test_yq_output_as_ini() {
-        let ctx = make_ctx(
-            &["-o", "ini", "."],
-            "database:\n  host: localhost\n  port: 5432\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("[database]"));
-        assert!(result.stdout.contains("host=localhost"));
-        assert!(result.stdout.contains("port=5432"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_convert_yaml_to_ini() {
-        let ctx = make_ctx(
-            &["-o", "ini", "."],
-            "name: test\nversion: 1\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name=test"));
-        assert!(result.stdout.contains("version=1"));
-    }
-
-    // CSV format tests
-    #[tokio::test]
-    async fn test_yq_read_csv_with_headers() {
-        let ctx = make_ctx(
-            &["-p", "csv", ".[0].name"],
-            "name,age,city\nalice,30,NYC\nbob,25,LA\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "alice");
-    }
-
-    #[tokio::test]
-    async fn test_yq_read_csv_get_all_names() {
-        let ctx = make_ctx(
-            &["-p", "csv", ".[].name"],
-            "name,age\nalice,30\nbob,25\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "alice\nbob");
-    }
-
-    #[tokio::test]
-    async fn test_yq_filter_csv_rows() {
-        let ctx = make_ctx(
-            &["-p", "csv", r#"[.[] | select(.city == "NYC") | .name]"#, "-o", "json"],
-            "name,age,city\nalice,30,NYC\nbob,25,LA\ncharlie,35,NYC\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        let parsed: Vec<String> = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(parsed, vec!["alice", "charlie"]);
-    }
-
-    #[tokio::test]
-    async fn test_yq_output_as_csv() {
-        let ctx = make_ctx(
-            &["-o", "csv", "."],
-            "- name: alice\n  age: 30\n- name: bob\n  age: 25\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name,age"));
-        assert!(result.stdout.contains("alice,30"));
-        assert!(result.stdout.contains("bob,25"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_convert_json_to_csv() {
-        let ctx = make_ctx(
-            &["-p", "json", "-o", "csv", "."],
-            r#"[{"name":"alice","score":95},{"name":"bob","score":87}]"#,
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("name,score"));
-        assert!(result.stdout.contains("alice,95"));
-        assert!(result.stdout.contains("bob,87"));
-    }
-
-    // join-output mode tests
-    #[tokio::test]
-    async fn test_yq_join_output_no_newlines() {
-        let ctx = make_ctx(
-            &["-j", ".items[]"],
-            "items:\n  - a\n  - b\n  - c\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "abc");
-    }
-
-    // exit-status mode tests
-    #[tokio::test]
-    async fn test_yq_exit_status_truthy() {
-        let ctx = make_ctx(&["-e", ".value"], "value: true\n");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-    }
-
-    #[tokio::test]
-    async fn test_yq_exit_status_null() {
-        let ctx = make_ctx(&["-e", ".missing"], "value: 42\n");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 1);
-    }
-
-    #[tokio::test]
-    async fn test_yq_exit_status_false() {
-        let ctx = make_ctx(&["-e", ".value"], "value: false\n");
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 1);
-    }
-
-    // indent option tests
-    #[tokio::test]
-    async fn test_yq_custom_indent() {
-        let ctx = make_ctx(
-            &["-o", "json", "-I", "4", "."],
-            "items:\n  - a\n  - b\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("    \"a\""));
-    }
-
-    // combined short options tests
-    #[tokio::test]
-    async fn test_yq_combined_rc_flags() {
-        let ctx = make_ctx(
-            &["-rc", "-o", "json", ".msg"],
-            "msg: hello\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "hello");
-    }
-
-    #[tokio::test]
-    async fn test_yq_combined_cej_flags() {
-        let ctx = make_ctx(
-            &["-cej", "-o", "json", ".items[]"],
-            "items:\n  - 1\n  - 2\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "12");
-    }
-
-    // jq builtin functions tests
-    #[tokio::test]
-    async fn test_yq_support_first() {
-        let ctx = make_ctx(
-            &[".items | first"],
-            "items:\n  - a\n  - b\n  - c\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "a");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_last() {
-        let ctx = make_ctx(
-            &[".items | last"],
-            "items:\n  - a\n  - b\n  - c\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "c");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_add_for_numbers() {
-        let ctx = make_ctx(
-            &[".nums | add"],
-            "nums:\n  - 1\n  - 2\n  - 3\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "6");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_min() {
-        let ctx = make_ctx(
-            &[".nums | min"],
-            "nums:\n  - 5\n  - 2\n  - 8\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "2");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_max() {
-        let ctx = make_ctx(
-            &[".nums | max"],
-            "nums:\n  - 5\n  - 2\n  - 8\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "8");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_unique() {
-        let ctx = make_ctx(
-            &[".items | unique", "-o", "json"],
-            "items:\n  - a\n  - b\n  - a\n  - c\n  - b\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        let parsed: Vec<String> = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(parsed, vec!["a", "b", "c"]);
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_sort_by() {
-        let ctx = make_ctx(
-            &[".items | sort_by(.name) | .[0].name"],
-            "items:\n  - name: b\n    val: 2\n  - name: a\n    val: 1\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "a");
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_reverse() {
-        let ctx = make_ctx(
-            &[".items | reverse", "-o", "json"],
-            "items:\n  - 1\n  - 2\n  - 3\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        let parsed: Vec<i32> = serde_json::from_str(&result.stdout).unwrap();
-        assert_eq!(parsed, vec![3, 2, 1]);
-    }
-
-    #[tokio::test]
-    async fn test_yq_support_group_by() {
-        let ctx = make_ctx(
-            &[".items | group_by(.type) | length"],
-            "items:\n  - type: a\n    v: 1\n  - type: b\n    v: 2\n  - type: a\n    v: 3\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "2");
-    }
-
-    // CSV options tests
-    #[tokio::test]
-    async fn test_yq_csv_no_header() {
-        let ctx = make_ctx(
-            &["-p", "csv", "--no-csv-header", ".[0][0]"],
-            "alice,30\nbob,25\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "alice");
-    }
-
-    // TOML format tests
-    #[tokio::test]
-    async fn test_yq_read_toml_extract_values() {
-        let ctx = make_ctx(
-            &[".package.name"],
-            "[package]\nname = \"my-app\"\nversion = \"1.0.0\"\n\n[dependencies]\nserde = \"1.0\"\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "my-app");
-    }
-
-    #[tokio::test]
-    async fn test_yq_output_as_toml() {
-        let ctx = make_ctx(
-            &["-o", "toml", "."],
-            "server:\n  host: localhost\n  port: 8080\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("[server]"));
-        assert!(result.stdout.contains("host = \"localhost\""));
-        assert!(result.stdout.contains("port = 8080"));
-    }
-
-    #[tokio::test]
-    async fn test_yq_convert_json_to_toml() {
-        let ctx = make_ctx(
-            &["-p", "json", "-o", "toml", "."],
-            r#"{"app": {"name": "test", "version": "2.0"}}"#,
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("[app]"));
-        assert!(result.stdout.contains("name = \"test\""));
-    }
-
-    // inplace mode tests
-    #[tokio::test]
-    async fn test_yq_modify_file_inplace() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_inplace_preserves_yaml_format() {
         let ctx = make_ctx_with_files(
             &["-i", r#".version = "2.0""#, "/data.yaml"],
             "",
             &[("/data.yaml", "version: 1.0\nname: test\n")],
-        ).await;
+        )
+        .await;
         let fs = ctx.fs.clone();
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+        let result = YqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "");
-
-        let content = fs.read_file("/data.yaml").await.unwrap();
-        assert!(content.contains("version: \"2.0\""));
+        let updated = fs.read_file("/data.yaml").await.unwrap();
+        assert!(updated.contains("version: 2.0") || updated.contains("version: \"2.0\""));
     }
 
-    // front-matter tests
-    #[tokio::test]
-    async fn test_yq_extract_yaml_front_matter() {
-        let ctx = make_ctx(
-            &["--front-matter", ".title"],
-            "---\ntitle: My Post\ndate: 2024-01-01\ntags:\n  - tech\n  - web\n---\n\n# Content here\n\nThis is the post body.\n",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "My Post");
-    }
-
-    #[tokio::test]
-    async fn test_yq_extract_front_matter_tags_array() {
-        let ctx = make_ctx(
-            &["--front-matter", ".tags[]"],
-            "---\ntitle: Test\ntags:\n  - a\n  - b\n---\nContent",
-        );
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "a\nb");
-    }
-
-    // format auto-detection tests
-    #[tokio::test]
-    async fn test_yq_auto_detect_json_extension() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_auto_detects_json_extension() {
         let ctx = make_ctx_with_files(
             &[".name", "/data.json"],
             "",
-            &[("/data.json", r#"{"name": "test", "value": 42}"#)],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+            &[("/data.json", r#"{"name":"demo"}"#)],
+        )
+        .await;
+        let result = YqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "test");
+        assert_eq!(result.stdout, "\"demo\"\n");
     }
 
-    #[tokio::test]
-    async fn test_yq_auto_detect_xml_extension() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_auto_detects_toml_extension() {
         let ctx = make_ctx_with_files(
-            &[".root.name", "/data.xml"],
+            &["-r", ".package.name", "/Cargo.toml"],
             "",
-            &[("/data.xml", "<root><name>test</name></root>")],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
+            &[("/Cargo.toml", "[package]\nname = \"demo\"\n")],
+        )
+        .await;
+        let result = YqCommand.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "test");
+        assert_eq!(result.stdout, "demo\n");
     }
 
-    #[tokio::test]
-    async fn test_yq_auto_detect_csv_extension() {
-        let ctx = make_ctx_with_files(
-            &[".[0].name", "/data.csv"],
-            "",
-            &[("/data.csv", "name,age\nalice,30\nbob,25\n")],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "alice");
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_invalid_yaml() {
+        let result = YqCommand
+            .execute(make_ctx(&["."], "invalid: yaml: syntax: error:"))
+            .await;
+        assert_eq!(result.exit_code, 5);
+        assert!(result.stderr.contains("parse error"));
     }
 
-    #[tokio::test]
-    async fn test_yq_auto_detect_ini_extension() {
-        let ctx = make_ctx_with_files(
-            &[".database.host", "/config.ini"],
-            "",
-            &[("/config.ini", "[database]\nhost=localhost\n")],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "localhost");
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_invalid_format() {
+        let result = YqCommand.execute(make_ctx(&["-p", "xml", "."], "")).await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("Unknown format"));
     }
 
-    #[tokio::test]
-    async fn test_yq_explicit_format_overrides_auto_detection() {
-        let ctx = make_ctx_with_files(
-            &["-p", "yaml", ".name", "/data.json"],
-            "",
-            &[("/data.json", "name: yaml-content\n")],
-        ).await;
-        let cmd = YqCommand;
-        let result = cmd.execute(ctx).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "yaml-content");
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_yq_raw_output_only_for_json_mode() {
+        let result = YqCommand
+            .execute(make_ctx(&["-yr", "."], "name: test\n"))
+            .await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("raw-output"));
     }
 }

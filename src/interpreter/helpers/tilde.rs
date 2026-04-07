@@ -79,7 +79,10 @@ mod tests {
     fn test_expand_tildes_in_value_single() {
         let env = make_env();
         assert_eq!(expand_tildes_in_value(&env, "~"), "/home/testuser");
-        assert_eq!(expand_tildes_in_value(&env, "~/Documents"), "/home/testuser/Documents");
+        assert_eq!(
+            expand_tildes_in_value(&env, "~/Documents"),
+            "/home/testuser/Documents"
+        );
     }
 
     #[test]

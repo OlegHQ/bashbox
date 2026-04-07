@@ -13,8 +13,8 @@
 //!   -p path    Use path as the full pathname for name (hash -p /path name)
 //!   -t name    Print the remembered location of name
 
-use std::collections::HashMap;
 use crate::interpreter::types::InterpreterState;
+use std::collections::HashMap;
 
 /// Result type for builtin commands
 pub type BuiltinResult = (String, String, i32);
@@ -66,7 +66,11 @@ pub fn handle_hash(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
             path_mode = true;
             i += 1;
             if i >= args.len() {
-                return (String::new(), "bash: hash: -p: option requires an argument\n".to_string(), 1);
+                return (
+                    String::new(),
+                    "bash: hash: -p: option requires an argument\n".to_string(),
+                    1,
+                );
             }
             pathname = args[i].clone();
             i += 1;
@@ -79,10 +83,18 @@ pub fn handle_hash(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
                     'l' => list_mode = true,
                     't' => show_path = true,
                     'p' => {
-                        return (String::new(), "bash: hash: -p: option requires an argument\n".to_string(), 1);
+                        return (
+                            String::new(),
+                            "bash: hash: -p: option requires an argument\n".to_string(),
+                            1,
+                        );
                     }
                     _ => {
-                        return (String::new(), format!("bash: hash: -{}: invalid option\n", ch), 1);
+                        return (
+                            String::new(),
+                            format!("bash: hash: -{}: invalid option\n", ch),
+                            1,
+                        );
                     }
                 }
             }
@@ -104,7 +116,11 @@ pub fn handle_hash(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
     // Handle -d (delete from table)
     if delete_mode {
         if names.is_empty() {
-            return (String::new(), "bash: hash: -d: option requires an argument\n".to_string(), 1);
+            return (
+                String::new(),
+                "bash: hash: -d: option requires an argument\n".to_string(),
+                1,
+            );
         }
         let mut has_error = false;
         let mut stderr = String::new();
@@ -126,7 +142,11 @@ pub fn handle_hash(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
     // Handle -t (show path for names)
     if show_path {
         if names.is_empty() {
-            return (String::new(), "bash: hash: -t: option requires an argument\n".to_string(), 1);
+            return (
+                String::new(),
+                "bash: hash: -t: option requires an argument\n".to_string(),
+                1,
+            );
         }
         let mut stdout = String::new();
         let mut has_error = false;
@@ -154,7 +174,11 @@ pub fn handle_hash(state: &mut InterpreterState, args: &[String]) -> BuiltinResu
     // Handle -p (associate pathname with name)
     if path_mode {
         if names.is_empty() {
-            return (String::new(), "bash: hash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n".to_string(), 1);
+            return (
+                String::new(),
+                "bash: hash: usage: hash [-lr] [-p pathname] [-dt] [name ...]\n".to_string(),
+                1,
+            );
         }
         // Associate the pathname with the first name
         let name = &names[0];
@@ -259,20 +283,25 @@ mod tests {
     #[test]
     fn test_handle_hash_add_with_path() {
         let mut state = InterpreterState::default();
-        let args = vec!["-p".to_string(), "/usr/bin/ls".to_string(), "ls".to_string()];
+        let args = vec![
+            "-p".to_string(),
+            "/usr/bin/ls".to_string(),
+            "ls".to_string(),
+        ];
         let (stdout, stderr, code) = handle_hash(&mut state, &args);
         assert_eq!(code, 0);
         assert!(stdout.is_empty());
         assert!(stderr.is_empty());
-        assert_eq!(state.hash_table.unwrap().get("ls"), Some(&"/usr/bin/ls".to_string()));
+        assert_eq!(
+            state.hash_table.unwrap().get("ls"),
+            Some(&"/usr/bin/ls".to_string())
+        );
     }
 
     #[test]
     fn test_handle_hash_delete() {
         let mut state = InterpreterState::default();
-        state.hash_table = Some(HashMap::from([
-            ("ls".to_string(), "/bin/ls".to_string()),
-        ]));
+        state.hash_table = Some(HashMap::from([("ls".to_string(), "/bin/ls".to_string())]));
         let args = vec!["-d".to_string(), "ls".to_string()];
         let (stdout, stderr, code) = handle_hash(&mut state, &args);
         assert_eq!(code, 0);
@@ -293,9 +322,7 @@ mod tests {
     #[test]
     fn test_handle_hash_show_path() {
         let mut state = InterpreterState::default();
-        state.hash_table = Some(HashMap::from([
-            ("ls".to_string(), "/bin/ls".to_string()),
-        ]));
+        state.hash_table = Some(HashMap::from([("ls".to_string(), "/bin/ls".to_string())]));
         let args = vec!["-t".to_string(), "ls".to_string()];
         let (stdout, stderr, code) = handle_hash(&mut state, &args);
         assert_eq!(code, 0);
@@ -321,9 +348,7 @@ mod tests {
     #[test]
     fn test_handle_hash_list_mode() {
         let mut state = InterpreterState::default();
-        state.hash_table = Some(HashMap::from([
-            ("ls".to_string(), "/bin/ls".to_string()),
-        ]));
+        state.hash_table = Some(HashMap::from([("ls".to_string(), "/bin/ls".to_string())]));
         let args = vec!["-l".to_string()];
         let (stdout, stderr, code) = handle_hash(&mut state, &args);
         assert_eq!(code, 0);
@@ -334,9 +359,7 @@ mod tests {
     #[test]
     fn test_handle_hash_display() {
         let mut state = InterpreterState::default();
-        state.hash_table = Some(HashMap::from([
-            ("ls".to_string(), "/bin/ls".to_string()),
-        ]));
+        state.hash_table = Some(HashMap::from([("ls".to_string(), "/bin/ls".to_string())]));
         let (stdout, stderr, code) = handle_hash(&mut state, &[]);
         assert_eq!(code, 0);
         assert!(stderr.is_empty());

@@ -33,18 +33,20 @@ pub fn parse_expressions(args: &[String]) -> Result<(Expression, FindOptions), S
                 if i >= args.len() {
                     return Err("find: missing argument to `-maxdepth'".to_string());
                 }
-                options.max_depth = Some(args[i].parse::<usize>().map_err(|_| {
-                    format!("find: invalid argument `{}' to `-maxdepth'", args[i])
-                })?);
+                options.max_depth =
+                    Some(args[i].parse::<usize>().map_err(|_| {
+                        format!("find: invalid argument `{}' to `-maxdepth'", args[i])
+                    })?);
             }
             "-mindepth" => {
                 i += 1;
                 if i >= args.len() {
                     return Err("find: missing argument to `-mindepth'".to_string());
                 }
-                options.min_depth = Some(args[i].parse::<usize>().map_err(|_| {
-                    format!("find: invalid argument `{}' to `-mindepth'", args[i])
-                })?);
+                options.min_depth =
+                    Some(args[i].parse::<usize>().map_err(|_| {
+                        format!("find: invalid argument `{}' to `-mindepth'", args[i])
+                    })?);
             }
             "-depth" => {
                 options.depth_first = true;
@@ -164,9 +166,8 @@ pub fn parse_expressions(args: &[String]) -> Result<(Expression, FindOptions), S
                 } else {
                     (PermMatch::Exact, perm_arg.as_str())
                 };
-                let mode = u32::from_str_radix(mode_str, 8).map_err(|_| {
-                    format!("find: invalid mode `{}'", perm_arg)
-                })?;
+                let mode = u32::from_str_radix(mode_str, 8)
+                    .map_err(|_| format!("find: invalid mode `{}'", perm_arg))?;
                 tokens.push(Token::Expr(Expression::Perm { mode, match_type }));
             }
             "-prune" => tokens.push(Token::Expr(Expression::Prune)),
@@ -196,10 +197,7 @@ pub fn parse_expressions(args: &[String]) -> Result<(Expression, FindOptions), S
                 _has_action = true;
                 i += 1;
                 let mut command_parts: Vec<String> = Vec::new();
-                while i < remaining.len()
-                    && remaining[i] != ";"
-                    && remaining[i] != "+"
-                {
+                while i < remaining.len() && remaining[i] != ";" && remaining[i] != "+" {
                     command_parts.push(remaining[i].clone());
                     i += 1;
                 }
@@ -356,12 +354,8 @@ fn parse_primary(tokens: &[Token], pos: &mut usize) -> Result<Expression, String
             *pos += 1;
             Ok(expr)
         }
-        Token::RParen => {
-            Err("find: unexpected ')'".to_string())
-        }
-        _ => {
-            Err("find: expression expected".to_string())
-        }
+        Token::RParen => Err("find: unexpected ')'".to_string()),
+        _ => Err("find: expression expected".to_string()),
     }
 }
 
@@ -377,7 +371,10 @@ mod tests {
     fn test_parse_name() {
         let (expr, _) = parse_expressions(&args(&["-name", "*.txt"])).unwrap();
         match expr {
-            Expression::Name { pattern, case_insensitive } => {
+            Expression::Name {
+                pattern,
+                case_insensitive,
+            } => {
                 assert_eq!(pattern, "*.txt");
                 assert!(!case_insensitive);
             }
@@ -396,8 +393,7 @@ mod tests {
 
     #[test]
     fn test_parse_implicit_and() {
-        let (expr, _) =
-            parse_expressions(&args(&["-name", "*.rs", "-type", "f"])).unwrap();
+        let (expr, _) = parse_expressions(&args(&["-name", "*.rs", "-type", "f"])).unwrap();
         match expr {
             Expression::And(left, right) => {
                 assert!(matches!(*left, Expression::Name { .. }));
@@ -409,10 +405,8 @@ mod tests {
 
     #[test]
     fn test_parse_or() {
-        let (expr, _) = parse_expressions(&args(&[
-            "-name", "*.rs", "-o", "-name", "*.toml",
-        ]))
-        .unwrap();
+        let (expr, _) =
+            parse_expressions(&args(&["-name", "*.rs", "-o", "-name", "*.toml"])).unwrap();
         match expr {
             Expression::Or(left, right) => {
                 assert!(matches!(*left, Expression::Name { .. }));
@@ -424,8 +418,7 @@ mod tests {
 
     #[test]
     fn test_parse_not() {
-        let (expr, _) =
-            parse_expressions(&args(&["!", "-name", "*.tmp"])).unwrap();
+        let (expr, _) = parse_expressions(&args(&["!", "-name", "*.tmp"])).unwrap();
         match expr {
             Expression::Not(inner) => {
                 assert!(matches!(*inner, Expression::Name { .. }));
@@ -503,10 +496,8 @@ mod tests {
     }
     #[test]
     fn test_parse_exec_semicolon() {
-        let (expr, _) = parse_expressions(&args(&[
-            "-exec", "grep", "-l", "TODO", "{}", ";",
-        ]))
-        .unwrap();
+        let (expr, _) =
+            parse_expressions(&args(&["-exec", "grep", "-l", "TODO", "{}", ";"])).unwrap();
         match expr {
             Expression::Exec { command, batch } => {
                 assert_eq!(command, vec!["grep", "-l", "TODO", "{}"]);
@@ -518,10 +509,8 @@ mod tests {
 
     #[test]
     fn test_parse_exec_batch() {
-        let (expr, _) = parse_expressions(&args(&[
-            "-exec", "grep", "-l", "TODO", "{}", "+",
-        ]))
-        .unwrap();
+        let (expr, _) =
+            parse_expressions(&args(&["-exec", "grep", "-l", "TODO", "{}", "+"])).unwrap();
         match expr {
             Expression::Exec { command, batch } => {
                 assert_eq!(command, vec!["grep", "-l", "TODO", "{}"]);
@@ -533,18 +522,14 @@ mod tests {
 
     #[test]
     fn test_parse_maxdepth_mindepth() {
-        let (_, options) = parse_expressions(&args(&[
-            "-maxdepth", "3", "-mindepth", "1",
-        ]))
-        .unwrap();
+        let (_, options) = parse_expressions(&args(&["-maxdepth", "3", "-mindepth", "1"])).unwrap();
         assert_eq!(options.max_depth, Some(3));
         assert_eq!(options.min_depth, Some(1));
     }
 
     #[test]
     fn test_parse_printf() {
-        let (expr, _) =
-            parse_expressions(&args(&["-printf", "%f\\n"])).unwrap();
+        let (expr, _) = parse_expressions(&args(&["-printf", "%f\\n"])).unwrap();
         match expr {
             Expression::Printf { format } => {
                 assert_eq!(format, "%f\\n");
@@ -557,8 +542,7 @@ mod tests {
     fn test_implicit_print_when_no_action() {
         // When no action is specified, parse should still succeed
         // (implicit print is handled at evaluation time)
-        let (expr, _) =
-            parse_expressions(&args(&["-name", "*.txt"])).unwrap();
+        let (expr, _) = parse_expressions(&args(&["-name", "*.txt"])).unwrap();
         assert!(matches!(expr, Expression::Name { .. }));
     }
 
@@ -587,17 +571,18 @@ mod tests {
 
     #[test]
     fn test_parse_depth_flag() {
-        let (_, options) =
-            parse_expressions(&args(&["-depth", "-name", "*.txt"])).unwrap();
+        let (_, options) = parse_expressions(&args(&["-depth", "-name", "*.txt"])).unwrap();
         assert!(options.depth_first);
     }
 
     #[test]
     fn test_parse_iname() {
-        let (expr, _) =
-            parse_expressions(&args(&["-iname", "*.TXT"])).unwrap();
+        let (expr, _) = parse_expressions(&args(&["-iname", "*.TXT"])).unwrap();
         match expr {
-            Expression::Name { pattern, case_insensitive } => {
+            Expression::Name {
+                pattern,
+                case_insensitive,
+            } => {
                 assert_eq!(pattern, "*.TXT");
                 assert!(case_insensitive);
             }

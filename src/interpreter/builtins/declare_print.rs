@@ -84,7 +84,10 @@ fn format_assoc_value(value: &str) -> String {
         return "''".to_string();
     }
     // If value contains spaces, single quotes, or other special chars, quote it
-    if value.chars().any(|c| c.is_whitespace() || c == '\'' || c == '\\') {
+    if value
+        .chars()
+        .any(|c| c.is_whitespace() || c == '\'' || c == '\\')
+    {
         // Escape single quotes as '\'' (end quote, escaped quote, start quote)
         let escaped = value.replace('\'', "'\\''");
         return format!("'{}'", escaped);
@@ -569,7 +572,11 @@ mod tests {
     fn test_get_variable_flags_readonly() {
         let mut state = make_state();
         state.readonly_vars = Some(std::collections::HashSet::new());
-        state.readonly_vars.as_mut().unwrap().insert("foo".to_string());
+        state
+            .readonly_vars
+            .as_mut()
+            .unwrap()
+            .insert("foo".to_string());
         assert_eq!(get_variable_flags(&state, "foo"), "-r");
     }
 
@@ -577,9 +584,17 @@ mod tests {
     fn test_get_variable_flags_multiple() {
         let mut state = make_state();
         state.readonly_vars = Some(std::collections::HashSet::new());
-        state.readonly_vars.as_mut().unwrap().insert("foo".to_string());
+        state
+            .readonly_vars
+            .as_mut()
+            .unwrap()
+            .insert("foo".to_string());
         state.exported_vars = Some(std::collections::HashSet::new());
-        state.exported_vars.as_mut().unwrap().insert("foo".to_string());
+        state
+            .exported_vars
+            .as_mut()
+            .unwrap()
+            .insert("foo".to_string());
         assert_eq!(get_variable_flags(&state, "foo"), "-rx");
     }
 

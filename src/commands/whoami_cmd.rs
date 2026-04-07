@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::commands::{Command, CommandContext, CommandResult};
+use async_trait::async_trait;
 
 pub struct WhoamiCommand;
 
@@ -18,11 +18,11 @@ impl Command for WhoamiCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fs::InMemoryFs;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use crate::fs::InMemoryFs;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_whoami() {
         let cmd = WhoamiCommand;
         let ctx = CommandContext {

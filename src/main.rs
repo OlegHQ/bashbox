@@ -1,6 +1,6 @@
 use clap::Parser;
-use std::io::Read;
 use just_bash::bash::{Bash, BashOptions};
+use std::io::Read;
 
 #[derive(Parser)]
 #[command(name = "just-bash")]
@@ -51,13 +51,18 @@ async fn main() {
             std::process::exit(1);
         }
         let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf).unwrap_or_default();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .unwrap_or_default();
         buf
     };
 
     if script.trim().is_empty() {
         if cli.json {
-            println!("{}", serde_json::json!({"stdout": "", "stderr": "", "exitCode": 0}));
+            println!(
+                "{}",
+                serde_json::json!({"stdout": "", "stderr": "", "exitCode": 0})
+            );
         }
         std::process::exit(0);
     }
@@ -65,7 +70,8 @@ async fn main() {
     let mut bash = Bash::new(BashOptions {
         cwd: cli.cwd,
         ..Default::default()
-    }).await;
+    })
+    .await;
 
     // Prepend set -e if errexit
     let final_script = if cli.errexit {
@@ -77,11 +83,14 @@ async fn main() {
     let result = bash.exec(&final_script, None).await;
 
     if cli.json {
-        println!("{}", serde_json::json!({
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "exitCode": result.exit_code,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exitCode": result.exit_code,
+            })
+        );
     } else {
         if !result.stdout.is_empty() {
             print!("{}", result.stdout);

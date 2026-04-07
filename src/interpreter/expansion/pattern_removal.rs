@@ -169,7 +169,9 @@ mod tests {
         };
         state.env.insert("PATH".to_string(), "/usr/bin".to_string());
         state.env.insert("PWD".to_string(), "/home".to_string());
-        state.env.insert("HOME".to_string(), "/home/user".to_string());
+        state
+            .env
+            .insert("HOME".to_string(), "/home/user".to_string());
 
         let result = get_var_names_with_prefix(&state, "P");
         assert!(result.contains(&"PATH".to_string()));

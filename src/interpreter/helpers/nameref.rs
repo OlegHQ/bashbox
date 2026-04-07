@@ -3,13 +3,16 @@
 //! Namerefs are variables that reference other variables by name.
 //! When a nameref is accessed, it transparently dereferences to the target variable.
 
-use std::collections::{HashMap, HashSet};
-use regex_lite::Regex;
 use crate::interpreter::types::InterpreterState;
+use regex_lite::Regex;
+use std::collections::{HashMap, HashSet};
 
 /// Check if a variable is a nameref.
 pub fn is_nameref(state: &InterpreterState, name: &str) -> bool {
-    state.namerefs.as_ref().map_or(false, |refs| refs.contains(name))
+    state
+        .namerefs
+        .as_ref()
+        .map_or(false, |refs| refs.contains(name))
 }
 
 /// Mark a variable as a nameref.
@@ -39,12 +42,19 @@ pub fn mark_nameref_invalid(state: &mut InterpreterState, name: &str) {
     if state.invalid_namerefs.is_none() {
         state.invalid_namerefs = Some(HashSet::new());
     }
-    state.invalid_namerefs.as_mut().unwrap().insert(name.to_string());
+    state
+        .invalid_namerefs
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
 }
 
 /// Check if a nameref was created with an invalid target.
 fn is_nameref_invalid(state: &InterpreterState, name: &str) -> bool {
-    state.invalid_namerefs.as_ref().map_or(false, |refs| refs.contains(name))
+    state
+        .invalid_namerefs
+        .as_ref()
+        .map_or(false, |refs| refs.contains(name))
 }
 
 /// Mark a nameref as "bound" - meaning its target existed at creation time.
@@ -53,26 +63,41 @@ pub fn mark_nameref_bound(state: &mut InterpreterState, name: &str) {
     if state.bound_namerefs.is_none() {
         state.bound_namerefs = Some(HashSet::new());
     }
-    state.bound_namerefs.as_mut().unwrap().insert(name.to_string());
+    state
+        .bound_namerefs
+        .as_mut()
+        .unwrap()
+        .insert(name.to_string());
 }
 
 /// Check if a name refers to a valid, existing variable or array element.
 /// Used to determine if a nameref target is "real" or just a stored value.
-pub fn target_exists(state: &InterpreterState, env: &HashMap<String, String>, target: &str) -> bool {
+pub fn target_exists(
+    state: &InterpreterState,
+    env: &HashMap<String, String>,
+    target: &str,
+) -> bool {
     // Check for array subscript
     let array_re = Regex::new(r"^([a-zA-Z_][a-zA-Z0-9_]*)\[(.+)\]$").unwrap();
     if let Some(caps) = array_re.captures(target) {
         let array_name = &caps[1];
         // Check if array exists (has any elements or is declared as assoc)
         let prefix = format!("{}_", array_name);
-        let has_elements = env.keys().any(|k| k.starts_with(&prefix) && !k.contains("__"));
-        let is_assoc = state.associative_arrays.as_ref().map_or(false, |a| a.contains(array_name));
+        let has_elements = env
+            .keys()
+            .any(|k| k.starts_with(&prefix) && !k.contains("__"));
+        let is_assoc = state
+            .associative_arrays
+            .as_ref()
+            .map_or(false, |a| a.contains(array_name));
         return has_elements || is_assoc;
     }
 
     // Check if it's an array (stored as target_0, target_1, etc.)
     let prefix = format!("{}_", target);
-    let has_array_elements = env.keys().any(|k| k.starts_with(&prefix) && !k.contains("__"));
+    let has_array_elements = env
+        .keys()
+        .any(|k| k.starts_with(&prefix) && !k.contains("__"));
     if has_array_elements {
         return true;
     }
@@ -390,7 +415,10 @@ mod tests {
         mark_nameref(&mut state, "foo");
         env.insert("foo".to_string(), "bar".to_string());
 
-        assert_eq!(get_nameref_target(&state, &env, "foo"), Some("bar".to_string()));
+        assert_eq!(
+            get_nameref_target(&state, &env, "foo"),
+            Some("bar".to_string())
+        );
     }
 
     #[test]

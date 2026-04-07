@@ -1,8 +1,9 @@
 //! continue - Skip to next loop iteration builtin
 
-use crate::interpreter::errors::{ContinueError, ExitError, SubshellExitError, InterpreterError};
-use crate::interpreter::types::InterpreterState;
 use super::break_cmd::BuiltinResult;
+use crate::interpreter::errors::{ContinueError, InterpreterError, SubshellExitError};
+use crate::interpreter::helpers::loop_helpers::parse_loop_levels;
+use crate::interpreter::types::InterpreterState;
 
 /// Handle the continue builtin command.
 ///
@@ -12,7 +13,10 @@ use super::break_cmd::BuiltinResult;
 ///
 /// # Returns
 /// Ok(BuiltinResult) for success, Err(InterpreterError) for control flow
-pub fn handle_continue(state: &InterpreterState, args: &[String]) -> Result<BuiltinResult, InterpreterError> {
+pub fn handle_continue(
+    state: &InterpreterState,
+    args: &[String],
+) -> Result<BuiltinResult, InterpreterError> {
     // Check if we're in a loop
     if state.loop_depth == 0 {
         // If we're in a subshell spawned from a loop context, exit the subshell
@@ -23,27 +27,7 @@ pub fn handle_continue(state: &InterpreterState, args: &[String]) -> Result<Buil
         return Ok(BuiltinResult::ok());
     }
 
-    // bash: too many arguments is an error (exit code 1)
-    if args.len() > 1 {
-        return Err(ExitError::new(1, String::new(), "bash: continue: too many arguments\n".to_string()).into());
-    }
-
-    let mut levels = 1u32;
-    if !args.is_empty() {
-        match args[0].parse::<i32>() {
-            Ok(n) if n >= 1 => {
-                levels = n as u32;
-            }
-            _ => {
-                return Err(ExitError::new(
-                    1,
-                    String::new(),
-                    format!("bash: continue: {}: numeric argument required\n", args[0]),
-                ).into());
-            }
-        }
-    }
-
+    let levels = parse_loop_levels("continue", args)?;
     Err(ContinueError::new(levels, String::new(), String::new()).into())
 }
 

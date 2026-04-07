@@ -2,8 +2,18 @@
 //!
 //! Type definitions for the bash interpreter state and context.
 
+use brush_parser::ast as bast;
 use std::collections::{HashMap, HashSet};
-use crate::FunctionDefNode;
+
+/// Wrapper around brush-parser's `FunctionDefinition` that tracks the source file
+/// where the function was defined (needed for `BASH_SOURCE`).
+#[derive(Debug, Clone)]
+pub struct StoredFunction {
+    /// The parsed function definition from brush-parser.
+    pub def: bast::FunctionDefinition,
+    /// Source file where this function was defined.
+    pub source_file: Option<String>,
+}
 
 /// Completion specification for a command, set by the `complete` builtin.
 #[derive(Debug, Clone, Default)]
@@ -116,41 +126,7 @@ impl Default for ShoptOptions {
 }
 
 // ============================================================================
-// Variable Attribute State
-// ============================================================================
-
-/// Tracks variable type attributes (declare -i, -l, -u, -n, -a, -A, etc.)
-/// and export status. These affect how variables are read, written, and expanded.
-#[derive(Debug, Clone, Default)]
-pub struct VariableAttributeState {
-    /// Set of variable names that are readonly
-    pub readonly_vars: Option<HashSet<String>>,
-    /// Set of variable names that are associative arrays
-    pub associative_arrays: Option<HashSet<String>>,
-    /// Set of variable names that are namerefs (declare -n)
-    pub namerefs: Option<HashSet<String>>,
-    /// Set of nameref variable names that were "bound" to valid targets at creation time.
-    pub bound_namerefs: Option<HashSet<String>>,
-    /// Set of nameref variable names that were created with an invalid target.
-    pub invalid_namerefs: Option<HashSet<String>>,
-    /// Set of variable names that have integer attribute (declare -i)
-    pub integer_vars: Option<HashSet<String>>,
-    /// Set of variable names that have lowercase attribute (declare -l)
-    pub lowercase_vars: Option<HashSet<String>>,
-    /// Set of variable names that have uppercase attribute (declare -u)
-    pub uppercase_vars: Option<HashSet<String>>,
-    /// Set of exported variable names
-    pub exported_vars: Option<HashSet<String>>,
-    /// Set of temporarily exported variable names (for prefix assignments like FOO=bar cmd)
-    pub temp_exported_vars: Option<HashSet<String>>,
-    /// Stack of sets tracking variables exported within each local scope.
-    pub local_exported_vars: Option<Vec<HashSet<String>>>,
-    /// Set of variable names that have been declared but not assigned a value
-    pub declared_vars: Option<HashSet<String>>,
-}
-
-// ============================================================================
-// Local Variable Scoping State
+// Local Variable Scoping
 // ============================================================================
 
 /// Entry in the local variable stack, tracking saved values for nested local declarations.
@@ -160,140 +136,8 @@ pub struct LocalVarStackEntry {
     pub scope_index: usize,
 }
 
-/// Tracks the complex local variable scoping machinery.
-#[derive(Debug, Clone, Default)]
-pub struct LocalScopingState {
-    /// Stack of local variable scopes (one Map per function call)
-    pub local_scopes: Vec<HashMap<String, Option<String>>>,
-    /// Tracks at which call depth each local variable was declared.
-    pub local_var_depth: Option<HashMap<String, u32>>,
-    /// Stack of saved values for each local variable, supporting bash's localvar-nest behavior.
-    pub local_var_stack: Option<HashMap<String, Vec<LocalVarStackEntry>>>,
-    /// Map of variable names to scope index where they were fully unset.
-    pub fully_unset_locals: Option<HashMap<String, usize>>,
-    /// Stack of temporary environment bindings from prefix assignments.
-    pub temp_env_bindings: Option<Vec<HashMap<String, Option<String>>>>,
-    /// Set of tempenv variable names that have been explicitly written to.
-    pub mutated_temp_env_vars: Option<HashSet<String>>,
-    /// Set of tempenv variable names that have been accessed.
-    pub accessed_temp_env_vars: Option<HashSet<String>>,
-}
-
 // ============================================================================
-// Call Stack State
-// ============================================================================
-
-/// Tracks the function call stack and source file nesting.
-#[derive(Debug, Clone)]
-pub struct CallStackState {
-    /// Function definitions (name -> AST node)
-    pub functions: HashMap<String, FunctionDefNode>,
-    /// Current function call depth (for recursion limits and local scoping)
-    pub call_depth: u32,
-    /// Current source script nesting depth (for return in sourced scripts)
-    pub source_depth: u32,
-    /// Stack of call line numbers for BASH_LINENO
-    pub call_line_stack: Option<Vec<u32>>,
-    /// Stack of function names for FUNCNAME
-    pub func_name_stack: Option<Vec<String>>,
-    /// Stack of source files for BASH_SOURCE
-    pub source_stack: Option<Vec<String>>,
-    /// Current source file context (for function definitions)
-    pub current_source: Option<String>,
-}
-
-impl Default for CallStackState {
-    fn default() -> Self {
-        Self {
-            functions: HashMap::new(),
-            call_depth: 0,
-            source_depth: 0,
-            call_line_stack: None,
-            func_name_stack: None,
-            source_stack: None,
-            current_source: None,
-        }
-    }
-}
-
-// ============================================================================
-// Control Flow State
-// ============================================================================
-
-/// Tracks loop nesting and condition context.
-#[derive(Debug, Clone, Default)]
-pub struct ControlFlowState {
-    /// True when executing condition for if/while/until (errexit doesn't apply)
-    pub in_condition: bool,
-    /// Current loop nesting depth (for break/continue)
-    pub loop_depth: u32,
-    /// True if this subshell was spawned from within a loop context
-    pub parent_has_loop_context: Option<bool>,
-    /// True when the last executed statement's exit code is "safe" for errexit purposes
-    pub errexit_safe: Option<bool>,
-}
-
-// ============================================================================
-// Process State
-// ============================================================================
-
-/// Tracks process IDs, timing, and execution counts.
-#[derive(Debug, Clone)]
-pub struct ProcessState {
-    /// Total commands executed (for execution limits)
-    pub command_count: u64,
-    /// Time when shell started (for $SECONDS)
-    pub start_time: u64,
-    /// PID of last background job (for $!)
-    pub last_background_pid: u32,
-    /// Current BASHPID (changes in subshells, unlike $$)
-    pub bash_pid: u32,
-    /// Counter for generating unique virtual PIDs for subshells
-    pub next_virtual_pid: u32,
-}
-
-impl Default for ProcessState {
-    fn default() -> Self {
-        Self {
-            command_count: 0,
-            start_time: 0,
-            last_background_pid: 0,
-            bash_pid: std::process::id(),
-            next_virtual_pid: 1000,
-        }
-    }
-}
-
-// ============================================================================
-// I/O State
-// ============================================================================
-
-/// Tracks file descriptors and stdin content for I/O operations.
-#[derive(Debug, Clone, Default)]
-pub struct IOState {
-    /// Stdin available for commands in compound commands
-    pub group_stdin: Option<String>,
-    /// File descriptors for process substitution and here-docs
-    pub file_descriptors: Option<HashMap<i32, String>>,
-    /// Next available file descriptor for {varname}>file allocation (starts at 10)
-    pub next_fd: Option<i32>,
-}
-
-// ============================================================================
-// Expansion State
-// ============================================================================
-
-/// Captures errors that occur during parameter expansion.
-#[derive(Debug, Clone, Default)]
-pub struct ExpansionState {
-    /// Exit code from expansion errors (arithmetic, etc.)
-    pub expansion_exit_code: Option<i32>,
-    /// Stderr from expansion errors
-    pub expansion_stderr: Option<String>,
-}
-
-// ============================================================================
-// Interpreter State (Composed)
+// Interpreter State
 // ============================================================================
 
 /// Complete interpreter state for bash script execution.
@@ -376,8 +220,8 @@ pub struct InterpreterState {
     pub accessed_temp_env_vars: Option<HashSet<String>>,
 
     // ---- Call Stack ----
-    /// Function definitions (name -> AST node)
-    pub functions: HashMap<String, FunctionDefNode>,
+    /// Function definitions (name -> stored function with source tracking)
+    pub functions: HashMap<String, StoredFunction>,
     /// Current function call depth (for recursion limits and local scoping)
     pub call_depth: u32,
     /// Current source script nesting depth (for return in sourced scripts)
@@ -503,7 +347,12 @@ pub struct ExecResult {
 
 impl ExecResult {
     pub fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
-        Self { stdout, stderr, exit_code, env: None }
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+            env: None,
+        }
     }
 
     pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
@@ -557,23 +406,6 @@ impl Default for ExecutionLimits {
 /// Trace callback type for performance profiling.
 pub type TraceCallback = Box<dyn Fn(&str, u64) + Send + Sync>;
 
-/// Command registry type - maps command names to their implementations.
-pub type CommandRegistry = HashMap<String, Box<dyn Command + Send + Sync>>;
-
-/// Trait for command implementations.
-pub trait Command {
-    fn execute(&self, ctx: &mut InterpreterContext, args: &[String], stdin: &str) -> ExecResult;
-}
-
-/// Interpreter context passed to commands and helpers.
-pub struct InterpreterContext<'a> {
-    pub state: &'a mut InterpreterState,
-    pub limits: &'a ExecutionLimits,
-    // Note: File system and other dependencies will be added as traits
-}
-
-impl<'a> InterpreterContext<'a> {
-    pub fn new(state: &'a mut InterpreterState, limits: &'a ExecutionLimits) -> Self {
-        Self { state, limits }
-    }
-}
+// Re-export InterpreterContext from its canonical location in interpreter.rs
+// so that existing `crate::interpreter::types::InterpreterContext` imports continue to resolve.
+pub use super::interpreter::InterpreterContext;

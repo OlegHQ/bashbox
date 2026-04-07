@@ -1,7 +1,8 @@
 // src/commands/ln/mod.rs
-use async_trait::async_trait;
+use crate::commands::arg_helpers::{invalid_option, wants_help};
 use crate::commands::{Command, CommandContext, CommandResult};
 use crate::fs::types::RmOptions;
+use async_trait::async_trait;
 
 pub struct LnCommand;
 
@@ -14,7 +15,7 @@ impl Command for LnCommand {
     async fn execute(&self, ctx: CommandContext) -> CommandResult {
         let args = &ctx.args;
 
-        if args.iter().any(|a| a == "--help") {
+        if wants_help(args) {
             return CommandResult::success(
                 "Usage: ln [OPTIONS] TARGET LINK_NAME\n\n\
                  Make links between files.\n\n\
@@ -61,14 +62,20 @@ impl Command for LnCommand {
                     let flag_chars: Vec<char> = arg[1..].chars().collect();
                     let all_valid = flag_chars.iter().all(|c| "sfvn".contains(*c));
                     if all_valid && !flag_chars.is_empty() {
-                        if flag_chars.contains(&'s') { symbolic = true; }
-                        if flag_chars.contains(&'f') { force = true; }
-                        if flag_chars.contains(&'v') { verbose = true; }
+                        if flag_chars.contains(&'s') {
+                            symbolic = true;
+                        }
+                        if flag_chars.contains(&'f') {
+                            force = true;
+                        }
+                        if flag_chars.contains(&'v') {
+                            verbose = true;
+                        }
                         arg_idx += 1;
                     } else {
                         return CommandResult::with_exit_code(
                             String::new(),
-                            format!("ln: invalid option -- '{}'\n", &arg[1..]),
+                            invalid_option("ln", &arg[1..]),
                             1,
                         );
                     }
@@ -89,7 +96,17 @@ impl Command for LnCommand {
         // Check if link already exists
         if ctx.fs.exists(&link_path).await {
             if force {
-                if let Err(_) = ctx.fs.rm(&link_path, &RmOptions { force: true, recursive: false }).await {
+                if let Err(_) = ctx
+                    .fs
+                    .rm(
+                        &link_path,
+                        &RmOptions {
+                            force: true,
+                            recursive: false,
+                        },
+                    )
+                    .await
+                {
                     return CommandResult::with_exit_code(
                         String::new(),
                         format!("ln: cannot remove '{}': Permission denied\n", link_name),
@@ -100,7 +117,10 @@ impl Command for LnCommand {
                 let link_type = if symbolic { "symbolic " } else { "" };
                 return CommandResult::with_exit_code(
                     String::new(),
-                    format!("ln: failed to create {}link '{}': File exists\n", link_type, link_name),
+                    format!(
+                        "ln: failed to create {}link '{}': File exists\n",
+                        link_type, link_name
+                    ),
                     1,
                 );
             }
@@ -110,11 +130,7 @@ impl Command for LnCommand {
             // Create symbolic link
             // For symlinks, the target is stored as-is (can be relative or absolute)
             if let Err(e) = ctx.fs.symlink(target, &link_path).await {
-                return CommandResult::with_exit_code(
-                    String::new(),
-                    format!("ln: {}\n", e),
-                    1,
-                );
+                return CommandResult::with_exit_code(String::new(), format!("ln: {}\n", e), 1);
             }
         } else {
             // Create hard link
@@ -123,7 +139,10 @@ impl Command for LnCommand {
             if !ctx.fs.exists(&target_path).await {
                 return CommandResult::with_exit_code(
                     String::new(),
-                    format!("ln: failed to access '{}': No such file or directory\n", target),
+                    format!(
+                        "ln: failed to access '{}': No such file or directory\n",
+                        target
+                    ),
                     1,
                 );
             }
@@ -136,11 +155,7 @@ impl Command for LnCommand {
                         1,
                     );
                 }
-                return CommandResult::with_exit_code(
-                    String::new(),
-                    format!("ln: {}\n", msg),
-                    1,
-                );
+                return CommandResult::with_exit_code(String::new(), format!("ln: {}\n", msg), 1);
             }
         }
 
@@ -156,50 +171,35 @@ impl Command for LnCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::{FileSystem, InMemoryFs};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::commands::test_utils::*;
+    use crate::fs::FileSystem;
 
-    async fn make_ctx_with_files(args: Vec<&str>, files: Vec<(&str, &str)>) -> CommandContext {
-        let fs = Arc::new(InMemoryFs::new());
-        for (path, content) in files {
-            fs.write_file(path, content.as_bytes()).await.unwrap();
-        }
-        CommandContext {
-            args: args.into_iter().map(String::from).collect(),
-            stdin: String::new(),
-            cwd: "/".to_string(),
-            env: HashMap::new(),
-            fs,
-            exec_fn: None,
-            fetch_fn: None,
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_symbolic() {
         let ctx = make_ctx_with_files(
             vec!["-s", "/target.txt", "/link.txt"],
             vec![("/target.txt", "hello world\n")],
-        ).await;
+        )
+        .await;
         let cmd = LnCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_error_exists() {
         let ctx = make_ctx_with_files(
             vec!["-s", "/target.txt", "/link.txt"],
             vec![("/target.txt", "hello\n"), ("/link.txt", "existing\n")],
-        ).await;
+        )
+        .await;
         let cmd = LnCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("File exists"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_missing_operand() {
         let ctx = make_ctx_with_files(vec![], vec![]).await;
         let cmd = LnCommand;
@@ -208,7 +208,7 @@ mod tests {
         assert!(result.stderr.contains("missing file operand"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_help() {
         let ctx = make_ctx_with_files(vec!["--help"], vec![]).await;
         let cmd = LnCommand;
@@ -218,23 +218,21 @@ mod tests {
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_hard_link() {
         let ctx = make_ctx_with_files(
             vec!["/original.txt", "/hardlink.txt"],
             vec![("/original.txt", "hello world\n")],
-        ).await;
+        )
+        .await;
         let cmd = LnCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 0);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_ln_hard_link_missing_target() {
-        let ctx = make_ctx_with_files(
-            vec!["/nonexistent.txt", "/link.txt"],
-            vec![],
-        ).await;
+        let ctx = make_ctx_with_files(vec!["/nonexistent.txt", "/link.txt"], vec![]).await;
         let cmd = LnCommand;
         let result = cmd.execute(ctx).await;
         assert_eq!(result.exit_code, 1);
