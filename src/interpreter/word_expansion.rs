@@ -509,8 +509,13 @@ pub fn expand_word_with_glob(
     let extglob = state.shopt_options.extglob;
 
     if noglob || !has_glob_pattern(&pattern.value, extglob) {
-        // No glob expansion needed - return the expanded value
-        return pattern;
+        // No glob expansion needed — strip any literal-escape backslashes that
+        // `expand_word_for_globbing` added for quoted/escaped metacharacters
+        // (e.g. `(`, `)`, `|`) so the FS sees the user's real filename.
+        return WordExpansionResult {
+            value: unescape_glob_pattern(&pattern.value),
+            ..pattern
+        };
     }
 
     let failglob = state.shopt_options.failglob;
@@ -941,6 +946,17 @@ mod tests {
     fn test_is_word_fully_quoted_literal() {
         let word = make_word("hello");
         assert!(!is_word_fully_quoted(&word));
+    }
+
+    #[test]
+    fn quoted_parens_unescaped_when_no_glob() {
+        // Regression: `cat '(2).md'` was reaching the FS as literal `\(2\).md`
+        // because `expand_word_for_globbing` escapes `(` / `)` inside quoted
+        // pieces and the no-glob early-return forgot to strip those escapes.
+        let mut state = InterpreterState::default();
+        let word = make_word("'(2).md'");
+        let result = expand_word_with_glob(&mut state, &word, None, None);
+        assert_eq!(result.value, "(2).md");
     }
 
     #[test]
