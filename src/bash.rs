@@ -468,4 +468,76 @@ mod tests {
         let result = bash.exec("exit 42", None).await;
         assert_eq!(result.exit_code, 42);
     }
+
+    // ========================================================================
+    // Redirect wiring tests — `>`, `>>`, `2>`, `&>`, redirect-on-compound, …
+    // ========================================================================
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_truncating_write() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        let result = bash.exec("echo data > /tmp/x", None).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "");
+        let body = bash.read_file("/tmp/x").await.unwrap();
+        assert_eq!(body, "data\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_appending_write() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        bash.exec("echo one > /tmp/x", None).await;
+        bash.exec("echo two >> /tmp/x", None).await;
+        let body = bash.read_file("/tmp/x").await.unwrap();
+        assert_eq!(body, "one\ntwo\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_stderr_to_file() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        let result = bash.exec("ls /nope 2> /tmp/e", None).await;
+        // stderr from `ls` was captured to the file, not surfaced.
+        assert!(result.stderr.is_empty(), "stderr leaked: {:?}", result.stderr);
+        let body = bash.read_file("/tmp/e").await.unwrap();
+        assert!(
+            body.to_lowercase().contains("no such") || body.to_lowercase().contains("nope"),
+            "stderr file contents unexpected: {body:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_combined_output() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        // `&>` truncates the target then writes both stdout and stderr.
+        bash.exec("echo hi &> /tmp/x", None).await;
+        let body = bash.read_file("/tmp/x").await.unwrap();
+        assert_eq!(body, "hi\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_pre_truncates_empty_output() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        bash.exec("echo seed > /tmp/x", None).await;
+        // `true` produces no output; `>` must still truncate the file.
+        bash.exec("true > /tmp/x", None).await;
+        let body = bash.read_file("/tmp/x").await.unwrap();
+        assert_eq!(body, "");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_on_compound_command() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        bash.exec("{ echo a; echo b; } > /tmp/x", None).await;
+        let body = bash.read_file("/tmp/x").await.unwrap();
+        assert_eq!(body, "a\nb\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_redirect_inside_pipeline_stage() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        // Per-stage redirect: the second stage redirects its stdout to a file.
+        bash.exec("echo data | tee /tmp/x > /tmp/y", None).await;
+        assert_eq!(bash.read_file("/tmp/x").await.unwrap(), "data\n");
+        assert_eq!(bash.read_file("/tmp/y").await.unwrap(), "data\n");
+    }
 }

@@ -26,10 +26,35 @@ use crate::interpreter::interpreter::{
 use crate::interpreter::pipeline_execution::{
     execute_pipeline, set_pipestatus, PipelineOptions, PipelineState,
 };
+use crate::interpreter::redirections::{apply_redirections, pre_open_output_redirects};
 use crate::interpreter::subshell_group::{execute_group, execute_subshell};
 use crate::interpreter::types::{ExecResult, ExecutionLimits, InterpreterState};
 use crate::interpreter::word_expansion::{expand_word, expand_word_with_glob, CommandSubstFn};
 use crate::network::{create_secure_fetch_fn, ureq_fetch_fn, NetworkConfig};
+
+/// Pull `IoRedirect` items out of a `SimpleCommand`'s prefix and suffix.
+///
+/// brush-parser stores redirects interleaved with words and assignments in
+/// `prefix.0` / `suffix.0`; this helper collects them in lexical order so the
+/// redirect-handling code can treat them as a flat slice.
+fn collect_simple_command_redirects(cmd: &bast::SimpleCommand) -> Vec<bast::IoRedirect> {
+    let mut out = Vec::new();
+    if let Some(ref prefix) = cmd.prefix {
+        for item in &prefix.0 {
+            if let bast::CommandPrefixOrSuffixItem::IoRedirect(r) = item {
+                out.push(r.clone());
+            }
+        }
+    }
+    if let Some(ref suffix) = cmd.suffix {
+        for item in &suffix.0 {
+            if let bast::CommandPrefixOrSuffixItem::IoRedirect(r) = item {
+                out.push(r.clone());
+            }
+        }
+    }
+    out
+}
 
 /// The execution engine that ties all interpreter components together.
 pub struct ExecutionEngine<'a> {
@@ -403,8 +428,22 @@ impl<'a> ExecutionEngine<'a> {
             }
         }
 
+        let redirects = collect_simple_command_redirects(cmd);
+
+        // Bash truncates `>`/`>|` targets before running the command, so the
+        // file ends up empty even if the command produces no output.
+        if !redirects.is_empty() {
+            if let Some(err) =
+                pre_open_output_redirects(state, &redirects, self.fs, |st, w| {
+                    expand_word(st, w, None).value
+                })
+            {
+                return Ok(err);
+            }
+        }
+
         let quoted: Vec<bool> = vec![false; args.len()];
-        self.run_command_invocation(
+        let result = self.run_command_invocation(
             state,
             cmd_name.as_str(),
             &args,
@@ -413,7 +452,20 @@ impl<'a> ExecutionEngine<'a> {
             false,
             false,
             -1,
-        )
+        )?;
+
+        if redirects.is_empty() {
+            Ok(result)
+        } else {
+            Ok(apply_redirections(
+                state,
+                result,
+                &redirects,
+                None,
+                self.fs,
+                |st, w| expand_word(st, w, None).value,
+            ))
+        }
     }
 
     /// Execute a compound command (if, for, while, case, subshell, group, arithmetic, etc.).
@@ -422,6 +474,37 @@ impl<'a> ExecutionEngine<'a> {
         state: &mut InterpreterState,
         compound: &bast::CompoundCommand,
         redirects: Option<&bast::RedirectList>,
+        stdin: &str,
+    ) -> Result<ExecResult, InterpreterError> {
+        let redir_list = redirects.map(|r| r.0.as_slice()).unwrap_or(&[]);
+        if !redir_list.is_empty() {
+            if let Some(err) =
+                pre_open_output_redirects(state, redir_list, self.fs, |st, w| {
+                    expand_word(st, w, None).value
+                })
+            {
+                return Ok(err);
+            }
+        }
+        let result = self.execute_compound_command_inner(state, compound, stdin)?;
+        if redir_list.is_empty() {
+            Ok(result)
+        } else {
+            Ok(apply_redirections(
+                state,
+                result,
+                redir_list,
+                None,
+                self.fs,
+                |st, w| expand_word(st, w, None).value,
+            ))
+        }
+    }
+
+    fn execute_compound_command_inner(
+        &self,
+        state: &mut InterpreterState,
+        compound: &bast::CompoundCommand,
         stdin: &str,
     ) -> Result<ExecResult, InterpreterError> {
         match compound {
