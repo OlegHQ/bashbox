@@ -493,6 +493,17 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_backslash_escaped_space_in_redirect_target() {
+        let mut bash = Bash::new(BashOptions::default()).await;
+        let result = bash
+            .exec("echo data > /tmp/foo\\ bar; cat /tmp/foo\\ bar", None)
+            .await;
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "data\n");
+        assert_eq!(bash.read_file("/tmp/foo bar").await.unwrap(), "data\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_redirect_stderr_to_file() {
         let mut bash = Bash::new(BashOptions::default()).await;
         let result = bash.exec("ls /nope 2> /tmp/e", None).await;

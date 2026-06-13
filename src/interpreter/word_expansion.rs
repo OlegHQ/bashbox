@@ -103,6 +103,10 @@ fn parse_word(word: &bast::Word) -> Vec<WordPieceWithSource> {
     brush_parser::word::parse(&word.value, &options).unwrap_or_default()
 }
 
+fn unescape_escape_sequence(text: &str) -> String {
+    text.strip_prefix('\\').unwrap_or(text).to_string()
+}
+
 /// Extract a parameter name from a brush_parser Parameter for simple variable lookup.
 fn parameter_name(param: &Parameter) -> String {
     match param {
@@ -174,7 +178,7 @@ fn expand_piece_no_glob(
         WordPiece::Text(text) => text.clone(),
         WordPiece::SingleQuotedText(text) => text.clone(),
         WordPiece::AnsiCQuotedText(text) => text.clone(),
-        WordPiece::EscapeSequence(text) => text.clone(),
+        WordPiece::EscapeSequence(text) => unescape_escape_sequence(text),
         WordPiece::TildePrefix(prefix) => {
             // Tilde expansion doesn't happen inside double quotes
             if options.in_double_quotes {
@@ -647,11 +651,12 @@ fn expand_word_for_globbing(
             }
             WordPiece::EscapeSequence(esc) => {
                 // Escaped character: escape if it's a glob metacharacter
-                if "*?[]\\()|".contains(esc.as_str()) {
+                let unescaped = unescape_escape_sequence(esc);
+                if "*?[]\\()|".contains(unescaped.as_str()) {
                     result.push('\\');
-                    result.push_str(esc);
+                    result.push_str(&unescaped);
                 } else {
-                    result.push_str(esc);
+                    result.push_str(&unescaped);
                 }
             }
             WordPiece::DoubleQuotedSequence(inner_pieces) => {
@@ -722,7 +727,7 @@ fn expand_piece_with_cmd_subst(
         WordPiece::Text(text) => (text.clone(), String::new(), None),
         WordPiece::SingleQuotedText(text) => (text.clone(), String::new(), None),
         WordPiece::AnsiCQuotedText(text) => (text.clone(), String::new(), None),
-        WordPiece::EscapeSequence(text) => (text.clone(), String::new(), None),
+        WordPiece::EscapeSequence(text) => (unescape_escape_sequence(text), String::new(), None),
         WordPiece::TildePrefix(prefix) => {
             // Tilde expansion doesn't happen inside double quotes
             if options.in_double_quotes {
